@@ -1,0 +1,3407 @@
+---
+title: "sawsharks"
+author: "Michael Doane"
+date: "2023-08-16"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+library
+```{r}
+#install.packages ("knitr", "readxl", "dplyr","tidyr","ggplot2","dunn.test","data.table")
+
+#install.packages("knitr")
+#install.packages("readxl")
+#install.packages("dplyr")
+#install.packages("tidyr")
+#install.packages("ggplot2")
+#install.packages("dunn.test")
+#install.packages("data.table")
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(dunn.test)
+library(data.table)
+library(stringr)
+#library(tidyverse)
+
+#computer <- 'personal' #flinders or personal
+
+if(getwd() == "C:/Users/Mike/Documents") {
+  comp.dir <- "C:/Users/Mike/"
+  setwd("C:/Users/Mike/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/")
+  working_dir <- "C:/Users/Mike/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/"
+} else {
+  comp.dir <- 'C:/Users/doan0033/'
+  setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/")
+  working_dir <- "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/"
+}
+
+
+#if (computer == 'flinders') { 
+  #comp.dir <- 'C:/Users/doan0033/'
+  #setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/")
+#} else {   
+  #comp.dir <- 'C:/Users/Mike/'
+  #setwd("C:/Users/Mike/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/")
+#}
+
+r.source <- paste(comp.dir, 'Dropbox/IMOS_project/r_markdown', sep = '/')
+source (paste(r.source, 'common.scripts', 'theme_mike_doane.r', sep = "/")) # Theme Mike Doane for ggplot
+```
+
+############################################################
+Bring dataframes into R and set up which taxa is of interest
+############################################################
+
+```{r}
+originalfile <- read.csv (paste0(comp.dir, "/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/taxonomy/all_levels.csv"), header = TRUE)
+
+sawshark_data <- originalfile %>% 
+  mutate(Phylum = ifelse(str_trim(Phylum) == "", paste0(Kingdom, "_unknown"), Phylum)) %>%
+  mutate(Phylum = gsub("unknown_unknown", "_unknown", Phylum)) %>%
+  mutate(Class = ifelse(str_trim(Class) == "", paste0(Phylum, "_unknown"), Class)) %>%
+  mutate(Class = gsub("unknown_unknown", " unknown", Class)) %>%
+  mutate(Order = ifelse(str_trim(Order) == "", paste0(Class, "_unknown"), Order)) %>%
+  mutate(Order = gsub("unknown_unknown", "unknown", Order)) %>%
+  mutate(Family = ifelse(str_trim(Family) == "", paste0(Order, "_unknown"), Family)) %>%
+  mutate(Family = gsub("unknown_unknown", "unknown", Family)) %>%
+  mutate(Genus = ifelse(str_trim(Genus) == "", paste0(Family, "_unknown"), Genus)) %>%
+  mutate(Genus = gsub("unknown_unknown", "unknown", Genus)) %>%
+  mutate(Species = ifelse(str_trim(Species) == "", paste0(Genus, "_unknown"), Species)) %>%
+  mutate(Species = gsub("unknown_unknown", "unknown", Species))
+
+if (names(sawshark_data)[1]== "Kingdom") { 
+names_change <- c(k = "Kingdom", p = "Phylum", c="Class", o = "Order", f = "Family", g = "Genus", s = "Species")
+
+sawshark_data<- sawshark_data %>%
+  rename (!!!names_change)
+}
+
+
+sawshark_meta <- read.csv ("metadata/sawshark_metadata.csv", header = TRUE)
+
+######## Add an OGU column ######################################################
+######## this creates a unique taxa variable that identifies each unique sequence
+######## the number of OGU's correspond with the number of Species identified ###
+
+sawshark_data <- sawshark_data %>%
+  mutate (ogu = row_number()) %>%
+  rename(Kingdom = "k", Phylum = "p", Class = "c", Order = "o", Family = "f", Genus = "g", Species = "s")
+
+sawshark_data$ogu <- paste0("ogu_", sawshark_data$ogu)
+sawshark_data <- sawshark_data %>% relocate (ogu, .after = Species)
+
+taxa_header <- c("Kingdom", "Phylum", "Class","Order","Family","Genus","Species", "ogu")
+sawshark_taxa <- sawshark_data %>%
+  select(all_of(taxa_header))
+
+############################################################################################################
+################################### Change this for the below code #########################################
+############################################################################################################
+
+
+which_group <- "Family" # what taxonomic level should be aggregated
+filter <- "Yes" # Yes or no for filtering singletons out
+samples <- "keep" #"no"
+
+
+
+if (which_group == "Kingdom") { 
+  to_select <- c("Phylum", "Class", "Order", "Family", "Genus", "Species", "ogu")
+  keep <- c("Kingdom")
+  remove <- c()
+} else if (which_group == 'Phylum') { 
+  to_select <- c("Class", "Order", "Family", "Genus", "Species", "ogu")
+  keep <- c("Kingdom","Phylum")
+  remove <- c("Kingdom")
+} else if (which_group == "Class") {
+  to_select <- c("Order", "Family", "Genus", "Species", "ogu")
+  keep <- c("Kingdom", "Phylum", "Class")
+  remove <- c("Kingdom", "Phylum")
+} else if (which_group == "Order") {
+  to_select <- c("Family", "Genus", "Species", "ogu")
+  keep <- c("Kingdom","Phylum", "Class", "Order")
+  remove <- c("Kingdom","Phylum", "Class")
+} else if (which_group == "Family") {
+  to_select <- c("Genus", "Species", "ogu") 
+  keep <- c("Kingdom","Phylum", "Class", "Order", "Family")
+  remove <- c("Kingdom","Phylum", "Class", "Order")
+} else if (which_group == "Genus") {
+  to_select <- c("Species", "ogu")
+  keep <- c("Kingdom","Phylum", "Class", "Order", "Family", "Genus")
+  remove <- c("Kingdom","Phylum", "Class", "Order", "Family")
+} else if (which_group == "Species") {
+  to_select <- c("ogu")
+  keep <- c("Kingdom","Phylum", "Class", "Order", "Family", "Genus", "Species")
+  remove <- c("Kingdom","Phylum", "Class", "Order", "Family", "Genus")
+} else {
+  to_select <- c()
+  keep <- c("Kingdom","Phylum", "Class", "Order", "Family", "Genus", "Species", "ogu")
+  remove <- c("Kingdom","Phylum", "Class", "Order", "Family", "Genus", "Species")
+}
+
+#group_sum <- paste0(which_group,"_sum")
+#group_prop <- paste0(which_group,"_prop")
+#filter <- "No"
+
+if (filter == "Yes") { 
+sawshark_df <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment,to_keep)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses")), to_keep == "keep") %>%
+  group_by(sample_name) %>%
+  mutate (sample_total = sum(value), taxa_prop = value/sample_total) %>% # Find the total number of annotated features for each sample
+  ungroup () %>%
+  filter(taxa_prop > 0.000001) %>% ### Filter at the OGU level first
+  select (-c(sample_total, taxa_prop, to_keep)) %>%
+  group_by (sample_name) %>%
+  mutate (sample_total = sum(value), taxa_prop = value/sample_total) %>%
+  ungroup () %>%
+  group_by (sample_name, !!! rlang::syms(which_group)) %>%
+  mutate(!!paste0(which_group, "_sum") := sum(value), !!paste0(which_group, "_prop") := !! as.name(paste0(which_group, "_sum"))/sample_total) %>%
+  ungroup () %>%
+  distinct(sample_name, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  dplyr::select(!c(value, sample_total, taxa_prop, !! as.name(paste0(which_group, "_sum")))) %>%
+  dplyr::select (!all_of(to_select)) %>% # remove specific taxa rank based on 'to_select' defined above
+  dplyr::select(!c(environment)) %>%
+  pivot_wider(names_from ="sample_name", values_from = !! as.name (paste0(which_group, "_prop")), values_fill = 0)
+
+########## Keep a long format data frame ##############################
+sawshark_df_raw <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment, to_keep)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses")), to_keep == "keep") %>%
+  group_by(sample_name) %>%
+  mutate (sample_total = sum(value), taxa_prop = value/sample_total) %>% # Find the total number of annotated features for each sample
+  filter(taxa_prop > 0.000001) %>%
+  select (-c(sample_total, taxa_prop, to_keep)) %>%
+  ungroup () %>%
+  group_by (sample_name, !!! rlang::syms(which_group)) %>%
+  mutate(!!paste0(which_group, "_sum") := sum(value)) %>%
+  ungroup () %>%
+  distinct(sample_name, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  dplyr::select(!c(value)) %>%
+  dplyr::select (!all_of(to_select)) %>% # remove specific taxa rank based on 'to_select' defined above
+  dplyr::select(!c(environment)) %>%
+  pivot_wider(names_from ="sample_name", values_from = !! as.name (paste0(which_group, "_sum")), values_fill = 0)
+########################################################################
+
+} else if (filter == "No") {
+  sawshark_df <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment,to_keep)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses")), to_keep == "keep") %>%
+  group_by(sample_name) %>%
+  mutate (sample_total = sum(value), taxa_prop = value/sample_total) %>% # Find the total number of annotated features for each sample
+  #filter(taxa_prop > 0.000001) %>% ### Filter at the OGU level first
+  group_by (sample_name, !!! rlang::syms(which_group)) %>%
+  mutate(!!paste0(which_group, "_sum") := sum(value), !!paste0(which_group, "_prop") := !! as.name(paste0(which_group, "_sum"))/sample_total) %>%
+  ungroup () %>%
+  distinct(sample_name, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  dplyr::select(!c(value, sample_total, !! as.name(paste0(which_group, "_sum")))) %>%
+  dplyr::select (!all_of(to_select)) %>% # remove specific taxa rank based on 'to_select' defined above
+  dplyr::select(!c(environment, taxa_prop, to_keep)) %>%
+  distinct(sample_name, !! as.name(which_group), .keep_all =TRUE) %>%
+  pivot_wider(names_from ="sample_name", values_from = !! as.name (paste0(which_group, "_prop")), values_fill = 0)
+  
+########## Keep a long format dataframe ############## 
+sawshark_df_raw <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment, to_keep)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses")), to_keep == "keep") %>%
+  group_by(sample_name) %>%
+  mutate (sample_total = sum(value), taxa_prop = value/sample_total) %>% # Find the total number of annotated features for each sample
+  #filter(taxa_prop > 0.000001) %>%
+  select (-c(sample_total, taxa_prop, to_keep)) %>%
+  ungroup () %>%
+  group_by (sample_name, !!! rlang::syms(which_group)) %>%
+  mutate(!!paste0(which_group, "_sum") := sum(value)) %>%
+  ungroup () %>%
+  distinct(sample_name, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  dplyr::select(!c(value)) %>%
+  dplyr::select (!all_of(to_select)) %>% # remove specific taxa rank based on 'to_select' defined above
+  dplyr::select(!c(environment, to_keep)) %>%
+  pivot_wider(names_from ="sample_name", values_from = !! as.name (paste0(which_group, "_sum")), values_fill = 0)
+#######################################################
+
+}
+
+######### Is the above code working with the group_by () command? ####################
+
+#### Check the original data frame #####
+duplicated_rows <- sawshark_data[duplicated(sawshark_data[["Species"]]) | duplicated(sawshark_data[["Species"]], fromLast = TRUE), ]
+duplicated_rows <- duplicated_rows %>% arrange(!! as.name("Species")) 
+
+#### Check the original data frame #####
+duplicated_rows <- sawshark_df[duplicated(sawshark_df[[which_group]]) | duplicated(sawshark_df[[which_group]], fromLast = TRUE), ]
+duplicated_rows <- duplicated_rows %>% arrange(!! as.name(which_group)) 
+dup_distinct <- duplicated_rows %>% dplyr::select (all_of(keep)) %>% group_by (!! as.name(which_group)) %>% mutate (count = n())
+
+dim(dup_distinct%>%distinct(!! as.name(which_group)))
+sum(dup_distinct$count)
+
+temp <- sawshark_data %>% filter (Species == "s__Acetobacteraceae bacterium")
+
+write.csv (duplicated_rows, "duplicates.csv", row.names = FALSE)
+######
+## Different taxonomic level ###
+######
+duplicated_rows <- sawshark_df[duplicated(sawshark_df[[which_group]]) | duplicated(sawshark_df[[which_group]], fromLast = TRUE), ]
+duplicated_rows <- duplicated_rows %>% arrange(!! as.name(which_group)) 
+######################################################################################
+
+##### Samples by taxa #####
+sawshark_df_sbyt_wide <- sawshark_df_fil %>%
+  pivot_wider (names_from=!!which_group, values_from = "level_prop", values_fill = c(level_sum=0)) %>%
+  tibble::column_to_rownames ("sample_name")
+
+##### 
+
+##### Taxa by samples #####
+sawshark_tbys_wide <- sawshark_df %>%
+  pivot_wider (names_from="sample_name", values_from = "level_sum", values_fill = c(level_sum=0)) %>%
+  tibble::column_to_rownames (which_group)
+
+
+#17 43276
+#na_df <- sawshark_data[!complete.cases(sawshark_data),]
+```
+
+Merging several big files together -- This was done on the HPC
+```{r}
+###### Read _tophit_report.taxonomy.tsv.gz
+check <- data.table::fread("../temp_file_merge/SAGCFN_22_01149_S3_tophit_report.taxonomy.tsv.gz")
+
+###### Read _tophit_aln.gz
+aln <- data.table::fread("../temp_file_merge/SAGCFN_22_01149_S3_tophit_aln.gz")
+aln_names <- c("read_num", "uniref","Fraction_similarity","length_match", "Gaps","Mismatches","Query_start","Query_end","Subject_tart","Subject_end", "E-value","bit_score") 
+colnames(aln) <- c(aln_names)
+
+##### Read _tophit_report.taxonomy.tsv.gz
+tophit_report <- data.table::fread("../temp_file_merge/SAGCFN_22_01149_S3_tophit_report.taxonomy.tsv.gz")
+tophit_report <- tophit_report %>% dplyr::select(c(V1,V6,V7,V8,V9,V10,V11,V12,V13,V14,V15,V16,V17))
+tophit_names <- c("uniref", "ncbi_id", "taxa_rank", "taxa","superkingdom","unknown","phylum","class","order","family","genus","species","subspecies")
+colnames(tophit_report) <- c(tophit_names)
+#tr_names <- c("target_identifier", "num_sequences_align", "unique_coverage", "target_coverage_aligned", "avg_seq_identity", "taxa_identifier")
+#colnames(tophit_report) <- c(tr_names)
+
+##### Read _tophit_report_subsystem.gz
+subsystems <- data.table::fread("../temp_file_merge/SAGCFN_22_01149_S3_tophit_report_subsystems.gz")
+subsystems <- subsystems %>% dplyr::select(c(V1,V9,V10,V11,V12,V13,V14))
+subsystem_names <- c("uniref", "L1","L2","L3","L4","L5","L6")
+colnames(subsystems) <- c(subsystem_names)
+
+merged <- aln %>%
+  left_join (tophit_report, by = "uniref") %>%
+  left_join (subsystems, by = "uniref")
+
+write.csv (merged, "../temp_")
+```
+
+Sawshark Metadata
+```{r}
+meta_taxa <- read_excel("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/metadata/sawshark_sequencing_metadata.xlsx", sheet="taxa_meta_R")
+meta_func <- read_excel("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/metadata/sawshark_sequencing_metadata.xlsx", sheet="func_meta_R")
+
+
+ggplot (meta_taxa, aes(x = environment, y = percent, color = environment)) +
+  geom_boxplot() +
+  theme_classic ()
+
+kruskal.test(percent ~ environment, data = meta_taxa)
+dunn_output <- dunn.test (meta_taxa$percent, meta_taxa$environment, method = "bh")
+
+
+ggplot (meta_func, aes(x = environment, y = percent, color = environment)) +
+  geom_boxplot() +
+  theme_classic ()
+
+kruskal.test(percent ~ environment, data = meta_func)
+dunn_output <- dunn.test (meta_func$percent, meta_func$environment, method = "bh")
+
+```
+
+####################################################################################################################
+##################### Plot relationship of sample abundance with sample richness ###################################
+####################################################################################################################
+
+```{r}
+if (names(sawshark_data)[1]== "Kingdom") { 
+names_change <- c(k = "Kingdom", p = "Phylum", c="Class", o = "Order", f = "Family", g = "Genus", s = "Species")
+ss_data<- sawshark_data %>%
+  rename (!!!names_change)
+}
+
+species_count <- ss_data %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment, sequence_length)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  group_by (sample_name) %>%
+  filter (value != 0) %>%
+  mutate(sample_total = sum(value), sample_richness = n_distinct(ogu)) %>%
+  distinct(sample_name, .keep_all = TRUE)
+
+
+ggplot (species_count, aes (x =log(sample_total), y = sample_richness, color = environment)) +
+  geom_point ()+
+  geom_smooth (method = "lm") +
+  #scale_color_manual (values = c("Mean_trimmed"="red"), name = NULL) +
+  #geom_abline(intercept = 0, slope = 1, size = 0.5) +
+  
+  theme_mike_doane() +
+  theme(strip.placement = "outside", 
+        axis.text.x = element_text (vjust =1, hjust = 1))
+
+species_saw <- species_count %>% filter (environment == "sawshark")
+species_water <- species_count %>% filter (environment == "water")
+model_saw <- glm(log(sample_total) ~ sample_richness, data = species_saw, family = gaussian)
+model_water <- glm(log(sample_total) ~ sample_richness, data = species_water, family = gaussian)
+
+```
+
+#################################################################
+########## check abundance distribution across datasets #########
+################### Trim data???? ###############################
+
+```{r}
+
+#setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/")
+#sawshark_data <- read.csv ("taxa_filled_output.csv", header = TRUE) ### has c(k, p, c, o, f, g, s, ogu) 
+#sawshark_meta <- read.csv ("metadata/sawshark_metadata.csv", header = TRUE)
+
+
+##########################################################################################################################################
+######################## Create duplicate variable to check if duplicates make a big difference ##########################################
+##########################################################################################################################################
+
+if (names(sawshark_data)[1]== "Kingdom") { 
+names_change <- c(k = "Kingdom", p = "Phylum", c="Class", o = "Order", f = "Family", g = "Genus", s = "Species")
+accum_curve<- sawshark_data %>%
+  rename (!!!names_change)
+}
+
+check_data <- sawshark_data
+
+check_data$duplicated <- duplicated(check_data$Species) | duplicated(check_data$Species, fromLast = TRUE)
+
+temp <- check_data %>% arrange(Species)
+temp_dup <- temp %>% select (Species, duplicated) %>% distinct(Species, .keep_all = TRUE)
+
+species_count <- check_data %>%
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species, ogu, duplicated), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  group_by (sample_name) %>%
+  mutate(total_before = sum (value)) %>%
+  ungroup () %>%
+  filter (duplicated == "FALSE") %>%
+  #arrange(sample_name, s) %>%
+  #select(-c(k,p,c))
+  group_by (sample_name) %>%
+  mutate(total_after = sum(value), prop_after = total_after/total_before) %>% 
+  select (sample_name, total_before, total_after, prop_after) %>%
+  #pivot_longer (!sample_name, names_to = "cat", values_to="sum") %>%
+  left_join ((sawshark_meta %>% select (sample_name, environment)), by = "sample_name")%>%
+  distinct(sample_name, .keep_all = TRUE) %>%
+  filter (sample_name != "duplicated")
+
+g1 <-ggplot (species_count, aes (x = sample_name)) +
+  geom_point (size =10, aes (y = total_before, color = "Before_trim")) +
+  geom_point (size = 10,aes (y = total_after, color = "After_trim"))+
+  facet_grid (~environment,scales = "free",  space = "free_x") + #switch = "x",
+  scale_color_manual (values  = c("Before_trim"="red", "After_trim" = "blue"), name = NULL)+
+  theme_mike_doane() +
+  theme(axis.text.x = element_blank (),
+        axis.title.x = element_blank())
+
+
+g2 <- ggplot (species_count, aes (x = sample_name)) +
+  geom_point (size = 10, aes (y = prop_after, color = "Mean_trimmed")) +
+  facet_grid (~environment,scales = "free", switch = "x", space = "free_x") +
+  scale_color_manual (values = c("Mean_trimmed"="red"), name = NULL) +
+  theme_mike_doane() +
+  theme(strip.placement = "outside", 
+        axis.text.x = element_text (vjust =1, hjust = 1))
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+png(file="duplicates_trimmed.png", res=600, width=6000, height=6000, pointsize=10, ### Need to remake this figure
+		type="windows", antialias="cleartype")
+cowplot::plot_grid (g1, g2,
+           labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+####################################
+##### Check the water duplicates ###
+##### Code chunk is not working ####
+####################################
+
+if (names(sawshark_data)[1]== "Kingdom") { 
+names_change <- c(k = "Kingdom", p = "Phylum", c="Class", o = "Order", f = "Family", g = "Genus", s = "Species")
+accum_curve<- sawshark_data %>%
+  rename (!!!names_change)
+}
+
+check_data$duplicates <- duplicated(check_data$s) | duplicated(check_data$s, fromLast = TRUE)
+temp <- check_data %>% arrange(s)
+temp_dup <- temp %>% select (s, duplicates) %>% distinct(s, .keep_all = TRUE)
+
+
+species_count <- check_data %>%
+  pivot_longer (!c(k, p, c, o, f, g, s), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (temp_dup, by = "s") %>%
+  left_join ((sawshark_meta %>% select (sample_name, environment)), by = "sample_name")%>%
+  filter(duplicates == "TRUE") %>%
+  select(-c(k,p,c,o)) %>%
+  filter(s == "s__candidate division WS1 bacterium")
+  
+temp_check <- check_data %>% filter (s == "s__candidate division WS1 bacterium")
+  
+  group_by (sample_name) %>%
+  mutate(total_before = sum (value)) %>%
+  ungroup () %>%
+  filter (duplicates == "FALSE") %>%
+  #arrange(sample_name, s) %>%
+  #select(-c(k,p,c))
+  group_by (sample_name) %>%
+  mutate(total_after = sum(value), mean_after = total_after/total_before) %>% 
+  select (sample_name, total_before, total_after, mean_after) %>%
+  #pivot_longer (!sample_name, names_to = "cat", values_to="sum") %>%
+  left_join ((sawshark_meta %>% select (sample_name, environment)), by = "sample_name")%>%
+  distinct(sample_name, .keep_all = TRUE) %>%
+  filter (sample_name != "duplicates")
+
+
+  
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value), taxa_prop = value/sample_total) %>%
+  select(-sample_total)
+check_duplicates <- sawshark_data %>% 
+  left_join ()
+
+##########################################################################################################################################
+######################## Calculate the proportion of each species in data set ############################################################
+##########################################################################################################################################
+if (names(sawshark_data)[1]== "Kingdom") { 
+names_change <- c(k = "Kingdom", p = "Phylum", c="Class", o = "Order", f = "Family", g = "Genus", s = "Species")
+ss_data<- sawshark_data %>%
+  rename (!!!names_change)
+}
+
+species_count <- ss_data %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value), taxa_prop = value/sample_total) %>%
+  select(-sample_total)
+
+##### Calculate the frequency of occurrence for each species in data set
+species_occurrance <- ss_data %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  filter(value >= 1) %>%
+  group_by (environment, ogu) %>%
+  summarise(species_occur = n())
+  
+##### What is the mean value of each species across each environment
+species_env <- species_count %>%
+  group_by(environment, ogu) %>%
+  summarise (env_count_mean = mean(value), env_prop_mean = (mean(taxa_prop))) 
+    
+##### How many samples occur in each environment
+sample_count <- ss_data %>%
+  pivot_longer (!c(k,p,c,o,f,g,s,ogu), names_to = 'sample_name', values_to = 'value') %>% #Kingdom, Phylum, Class, Order, Family, Genus, Species
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  group_by(environment) %>%
+  summarise (sample_count = n_distinct(sample_name))
+
+ss_merged <- species_count %>%
+  #left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  left_join (., species_occurrance, by = c("environment", "ogu")) %>%
+  left_join (., sample_count, by = "environment") %>%
+  mutate (species_freq_occur = species_occur/sample_count)
+
+
+ggplot((ss_merged %>% filter (taxa_prop >= 0.00001)), aes (log10(taxa_prop), species_freq_occur)) +
+  geom_point () +
+  #geom_smooth ()
+  facet_grid (~environment) +
+  theme_mike_doane()
+
+  
+######### Species abundance across species occurrance (frequency) across the dataset ###############
+ts_merged %>%filter(environment == "water" & species_percent >= 0.00001) %>% mutate(species_occur = factor(species_occur)) %>%
+  ggplot(mapping = aes(x = log10(species_percent), y = factor(species_occur))) +  
+  geom_boxplot() + 
+  #geom_line(data = occurrance_mean, mapping = aes(x = log10(species_avg), y = species_occur, group=1), 
+            #color="red", size=1.4) + 
+    theme_mike_doane ()
+
+#####################################################################################################################  
+########### Examine how chopping species frequencies from data alters the total individuals in the dataset ##########
+#####################################################################################################################
+
+i = 2
+
+cut_values <- c(0, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95)
+data_trim <- list()
+data_sd <- list()
+
+for (i in 1:length(cut_values)){
+name <- paste("cut", cut_values[i], sep = "_")
+
+x_mean <- ss_merged %>% 
+  filter(species_freq_occur >= cut_values[i]) %>% 
+  group_by (sample_name) %>%
+  mutate (f_sample_sum = sum(taxa_prop)) %>%
+  ungroup () %>%
+  group_by (environment) %>% 
+  summarise (env_mean = mean(f_sample_sum)) %>% 
+  rename (!!name := env_mean)
+
+data_trim[[name]] <- x_mean
+
+x_sd <- ss_merged %>% 
+  filter(species_freq_occur >= cut_values[i]) %>% 
+  group_by (sample_name) %>%
+  mutate (f_sample_sum = sum(taxa_prop)) %>%
+  ungroup () %>%
+  group_by (environment) %>% 
+  summarise (env_sd = sd(f_sample_sum)) %>% 
+  rename (!!name := env_sd)
+
+data_sd[[name]] <- x_sd
+
+
+}
+
+percent <- data_trim %>% purrr::reduce (left_join, by = 'environment')
+sd <- data_sd %>% purrr::reduce (left_join, by = 'environment')
+
+percent_long <- percent %>%
+  pivot_longer (!environment, names_to = "cut", values_to = "percent")
+
+sd_long <- sd %>%
+  pivot_longer (!environment, names_to = "cut", values_to = "sd")
+
+percent_long <- percent_long %>%
+  left_join (sd_long, by = c("environment", "cut"))
+
+g <- ggplot (percent_long, aes (x = cut, y = percent, color = as.factor(environment), group = environment)) +
+  geom_point (size = 5) +
+  geom_line () +
+  geom_errorbar (aes (ymin = percent-sd, ymax=percent+sd), width = .2, position=position_dodge(0.05))+
+  scale_y_continuous(breaks = seq(0,1, by = 0.05)) +
+  xlab ("Frequency of occurrance cut-off") +
+  ylab ("Accumulative mean proportion of taxa") +
+  scale_color_manual (values = c("sawshark"="#fdae6b", "water"="#80cdc1"), name = "Group")+
+  theme_mike_doane()
+
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+png(file="cumm_sum_frequency.png", res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+g
+dev.off()
+
+
+#####################################################################################################################
+########################## Spieces accumulation plot ################################################################
+#####################################################################################################################
+#names_change <- c(Kingdom = "k", Phylum = "p", Class = "c", Order = "o", Family = "f", Genus = "g", Species = "s")
+
+if (names(sawshark_data)[1]== "Kingdom") { 
+names_change <- c(k = "Kingdom", p = "Phylum", c="Class", o = "Order", f = "Family", g = "Genus", s = "Species")
+accum_curve<- sawshark_data %>%
+  rename (!!!names_change)
+}
+
+cut_values <- c(0, 0.000000001, 0.000000005,0.00000001,0.00000005, 0.0000001,0.0000005, 0.000001,0.000005, 0.00001,0.00005, 0.0001,0.0005, 0.001,0.005, 0.01, 0.05, 0.1)
+cut_rank <- c("01", "02", "03", "04", "05", "06", "07", "08", "09","10","11","12","13","14","15","16","17", "18")
+cut_rank1 <- c("0","0.000000001", "0.000000005","0.00000001","0.00000005", "0.0000001","0.0000005", "0.000001","0.000005", "0.00001","0.00005", "0.0001","0.0005", "0.001","0.005", "0.01", "0.05", "0.1")
+data_mean <- list()
+data_sd <- list()
+data_se <- list()
+rich_mean <- list ()
+rich_sd <- list()
+
+#i = 1
+
+for (i in 1:length(cut_values)){
+name <- paste("cut", cut_rank1[i], sep = "_")
+ 
+accum_mean <- accum_curve %>%
+  #rename (!!!names_change) %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value), taxa_prop = value/sample_total) %>%
+  filter(taxa_prop >= cut_values[i]) %>%
+  mutate(sample_after_cut = sum(value), prop_cut = sample_after_cut/sample_total) %>%
+  group_by (environment) %>%
+  summarise(env_mean = mean(prop_cut)) %>%
+  rename (!!name := env_mean)
+
+data_mean[[name]] <- accum_mean
+
+accum_sd <- accum_curve %>%
+  #rename (!!!names_change) %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value), taxa_prop = value/sample_total) %>%
+  filter(taxa_prop >= cut_values[i]) %>%
+  mutate(sample_after_cut = sum(value), prop_cut = sample_after_cut/sample_total) %>%
+  group_by (environment) %>%
+  summarise(env_sd = sd(prop_cut)) %>%
+  rename (!!name := env_sd)
+
+data_sd[[name]] <- accum_sd
+
+accum_se <- accum_curve %>%
+  #rename (!!!names_change) %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value), taxa_prop = value/sample_total) %>%
+  filter(taxa_prop >= cut_values[i]) %>%
+  mutate(sample_after_cut = sum(value), prop_cut = sample_after_cut/sample_total) %>%
+  group_by (environment) %>%
+  summarise(env_se = sd(prop_cut)/sqrt(n())) %>%
+  rename (!!name := env_se)
+
+data_se[[name]] <- accum_se
+
+richness_mean <- accum_curve %>%
+  #rename (!!!names_change) %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  filter(value > 0) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value), taxa_prop = value/sample_total, rich_total = n_distinct(ogu)) %>%
+  filter(taxa_prop >= cut_values[i]) %>%
+  mutate(richness = n_distinct(ogu), rich_mean_sample = richness/rich_total) %>%
+  distinct(sample_name, .keep_all = TRUE) %>%
+  ungroup() %>%
+  group_by (environment) %>%
+  summarise(rich_env = mean (rich_mean_sample)) %>%
+  rename(!!name:=rich_env)
+
+rich_mean[[name]] <- richness_mean
+
+richness_sd <- accum_curve %>%
+  #rename (!!!names_change) %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value), taxa_prop = value/sample_total, rich_total = n_distinct(ogu)) %>%
+  filter(taxa_prop >= cut_values[i]) %>%
+  mutate(richness = n_distinct(ogu), rich_mean_sample = richness/rich_total) %>%
+  distinct(sample_name, .keep_all = TRUE) %>%
+  ungroup() %>%
+  group_by (environment) %>%
+  summarise(sd_env = sd(rich_mean_sample)) %>%
+  rename(!!name:=sd_env)
+
+rich_sd[[name]] <- richness_sd
+
+}
+
+percent <- data_mean %>% purrr::reduce (left_join, by = 'environment')
+sd <- data_sd %>% purrr::reduce (left_join, by = 'environment')
+se <- data_se %>% purrr::reduce (left_join, by = 'environment')
+r_mean <- rich_mean %>% purrr::reduce (left_join, by = 'environment')
+r_sd <- rich_sd %>% purrr::reduce (left_join, by = 'environment')
+
+
+percent_long <- percent %>%
+  pivot_longer (!c(environment), names_to = "cut", values_to = "accum_mean") %>%
+  arrange(desc(cut))
+
+sd_long <- sd %>%
+  pivot_longer (!c(environment), names_to = "cut", values_to = "accum_sd") %>%
+  arrange(desc(cut))
+
+se_long <- se %>%
+  pivot_longer (!c(environment), names_to = "cut", values_to = "accum_se") %>%
+  arrange(desc(cut))
+
+r_mean_long <- r_mean %>%
+  pivot_longer (!c(environment), names_to = "cut", values_to = "rich_mean") %>%
+  arrange(desc(cut))
+
+r_sd_long <- r_sd %>%
+  pivot_longer (!c(environment), names_to = "cut", values_to = "rich_sd") %>%
+  arrange(desc(cut))
+
+
+accum_long <- percent_long %>%
+  left_join (sd_long, by = c("environment", "cut")) %>%
+  left_join (se_long, by = c("environment", "cut")) %>%
+  left_join (r_mean_long, by = c("environment", "cut")) %>%
+  left_join (r_sd_long, by = c("environment", "cut"))
+
+
+g1 <- ggplot (accum_long, aes (x = cut, y = accum_mean, color = as.factor(environment), group = environment)) +
+  geom_point (size = 5) +
+  geom_errorbar (aes (ymin = accum_mean-accum_sd, ymax=accum_mean+accum_sd), width = .2, position=position_dodge(0.05))+
+  #geom_point (aes (y = rich_mean, size = 5)) +
+  geom_line () +
+  scale_y_continuous(breaks = seq(0,1, by = 0.05)) +
+  xlab ("Cut - Percent of samples") +
+  ylab ("Mean percent") +
+  theme_mike_doane() +
+  theme (axis.title.x = element_blank(),
+         axis.text.x = element_blank(),
+         axis.ticks.x = element_blank())
+
+g2 <- ggplot (accum_long, aes (x = cut, y = rich_mean, color = as.factor(environment), group = environment)) +
+  geom_point (size = 5) +
+  geom_errorbar (aes (ymin = rich_mean-rich_sd, ymax=rich_mean+rich_sd), width = .2, position=position_dodge(0.05))+
+  #geom_point (aes (y = rich_mean, size = 5)) +
+  geom_line () +
+  scale_y_continuous(breaks = seq(0,1, by = 0.05)) +
+  #geom_vline(xintercept = 7.5)
+  xlab ("Cut - Percent of samples") +
+  ylab ("Mean percent") +
+  theme_mike_doane() +
+  theme (axis.text.x = element_text(hjust=1, vjust=1))
+
+
+
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+png(file="cumm_sum_richness.png", res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+cowplot::plot_grid (g1, g2,
+           labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+
+#####################################################################################################################  
+######################### Examine the species distribution across the dataset - Rank abundance ######################
+#####################################################################################################################
+
+if (names(sawshark_data)[1]== "Kingdom") { 
+names_change <- c(k = "Kingdom", p = "Phylum", c="Class", o = "Order", f = "Family", g = "Genus", s = "Species")
+accum_curve<- sawshark_data %>%
+  rename (!!!names_change)
+}
+
+species_count <- accum_curve %>%
+  pivot_longer (!c(k, p, c, o, f, g, s, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join (., (sawshark_meta %>% dplyr::select(sample_name, environment)), by = c("sample_name" = "sample_name")) %>%
+  filter (!k %in% c("s__Eukaryote", "s__Viruses ")) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value), taxa_prop = value/sample_total) %>%
+  filter (taxa_prop > 0.000001) %>%
+  select(-sample_total)
+
+######################################################################################################################################
+##### What is the mean value of each species across each environment #################################################################
+##### Rank abundance distribution plots ##############################################################################################
+species_env <- species_count %>%
+  group_by(environment, ogu) %>%
+  summarise (env_ogu_mean = mean(value), env_prop_mean = (mean(taxa_prop))) %>%
+  arrange(environment, -env_prop_mean) %>%
+  group_by (environment) %>%
+  mutate(mean_rank = rank(-env_prop_mean))
+
+
+
+fourth <- function(x) {
+  analogue::tran(x, method = "rootroot")
+}
+
+cube <- function(x) {
+  analogue::tran(x, method = "cubert")
+}
+
+sc_fourth <- as.data.frame(transform(species_env$env_prop_mean))
+names(sc_fourth)[1] <- "fourthroot"
+
+sc_cube <- as.data.frame(transform(species_env$env_prop_mean))
+names(sc_cube)[1] <- "cuberoot"
+
+
+sawshark_class <- cbind (species_env, sc_fourth, sc_cube)
+
+g1 <-ggplot (sawshark_class, aes(mean_rank, log(env_prop_mean))) +
+  geom_point () +
+  facet_grid (~environment, scales = "free") +
+  theme_mike_doane()
+
+ggplot (sawshark_class, aes (mean_rank, log10(fourthroot))) +
+  geom_point () +
+  facet_grid (~environment, scales = "free") +
+  theme_mike_doane()
+
+##### Pairwise ######
+rac_output <- RAC_difference(df = species_count,
+                             species.var = "ogu",
+                             abundance.var = "taxa_prop",
+                             replicate.var = "sample_name",
+                             treatment.var = "environment")
+rac_out <- rac_output %>%
+  mutate (new_env = ifelse (environment == "sawshark" & environment2 == "sawshark", "sawshark",
+                            ifelse (environment == "water" & environment2 == "water", "water", "both")))
+
+ggplot (rac_out, aes (new_env, species_diff)) +
+  geom_boxplot()+
+  theme_mike_doane()
+
+ggplot (rac_out, aes (richness_diff, evenness_diff, color = new_env)) +
+  geom_point () +
+  theme_mike_doane()
+```
+
+Experimental code with trying to fit the neutral model to data
+This code is from: https://rdrr.io/github/Russel88/MicEco/src/R/neutral.fit.R
+and was used in Sloan et al., 2006 and Burns et al., 2015
+```{r}
+#' Fit Sloan et al. (2006) Neutral Model
+#'
+#' Fit neutral model developed by Sloan et al. (2006, Environ Microbiol 8(4):732-740) and implemented by Burns et al. (2015, ISME J 10(3):655-664).
+#' @param otu An OTU-table with taxa as columns and samples as rows.
+#' @keywords neutral
+#' @return A list of length two; first element contains fit statistics, the second element contains predictions.
+#' @import bbmle
+#' @export
+
+library(bbmle)
+library(Hmisc)
+
+neutral_input <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  dplyr::select (!all_of(to_select)) %>% # remove specific taxa rank based on 'to_select' defined above
+  dplyr::select(!all_of(remove)) %>% # remove specific taxa rank based on 'remove' defined above
+  group_by (sample_name, !!! rlang::syms(which_group)) %>%
+  mutate(level_sum = sum(value)) %>%
+  distinct(sample_name, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  dplyr::select(!value) %>%
+  filter(environment == "water") %>%
+  dplyr::select(!environment) %>%
+  pivot_wider (names_from=1, values_from = "level_sum", values_fill = c(level_sum=0)) %>%
+  tibble::column_to_rownames ("sample_name")
+
+
+neutral.fit <- function(otu){
+  
+  # Frequency
+  otu.pa <- (otu>0)*1
+  freq <- apply(otu.pa, 2, mean)
+  
+  # Individuals per community
+  N <- mean(apply(otu, 1, sum))
+  
+  # Relative abundance
+  p <- apply(otu, 2, function(x) mean(x))/N
+  
+  # Detection limit
+  d = 1/N
+  
+  # Define likelihood function
+  neutral.ll <- function(m, sigma){
+    R = freq - pbeta(d, N*m*p, N*m*(1-p), lower.tail=FALSE)
+    -sum(dnorm(R, 0, sigma,log=TRUE))
+  }
+  
+  # Fit neutral model
+  m.mle <-mle2(neutral.ll, start=list(m=0.01, sigma=0.1),method="Nelder-Mead")
+  
+  # R-squared
+  gRsqr <- 1 - exp(-as.numeric(logLik(m.mle))/length(p))
+  
+  # Predictions
+  freq.pred <- pbeta(d, N*m.mle@coef['m']*p, N*m.mle@coef['m']*(1-p), lower.tail=FALSE)
+  pred.ci <- binconf(freq.pred*nrow(otu), nrow(otu), return.df=TRUE)
+  
+  # Bind results
+  stats <- cbind(m.mle@coef['m'], m.mle@details$value,gRsqr , N, nrow(otu), length(p), d)
+  pred <- cbind(p, freq, freq.pred, pred.ci[,2:3])
+  
+  results <- list(stats,pred)
+  return(results)
+}
+
+saw_neutral_out <- neutral.fit(neutral_input)
+
+water_neutral_out <- neutral.fit(neutral_input)
+
+
+saw_neutral_stats <- as.data.frame(saw_neutral_out[[1]])
+water_neutral_stats <- as.data.frame(water_neutral_out[[1]])
+
+saw_neutral_list <- as.data.frame(saw_neutral_out[[2]])
+saw_neutral_list <- saw_neutral_list %>%
+  mutate (below = freq-Lower, above = freq-Upper) %>% ### if "below" is negative, then below lower 95 % confidence band, and if "above" is positive, then greater than higer 95 % confidence
+  mutate (category = ifelse (below < 0 & above < 0, "below", ifelse (below > 0 & above > 0, "above", "between")), environment = "sawshark")
+
+water_neutral_stats <- as.data.frame(water_neutral_out[[1]])
+water_neutral_list <- as.data.frame(water_neutral_out[[2]])
+water_neutral_list <- water_neutral_list %>%
+  mutate (below = freq-Lower, above = freq-Upper) %>% ### if "below" is negative, then below lower 95 % confidence band, and if "above" is positive, then greater than higer 95 % confidence
+  mutate (category = ifelse (below < 0 & above < 0, "below", ifelse (below > 0 & above > 0, "above", "between")), environment = "water")
+
+all_neutral <- rbind(saw_neutral_list, water_neutral_list)
+```
+
+######### Fitting Species Abundance Distribution Models (SADS)
+#############################################################
+The figures below indicate that the sawsharks microbial groups collectively fit a power-law distribution, while the water column samples, though do still fit the power-law (p < 0.01), they deviate more, in general. This suggests the possibility that sawsharks more closely relate to patterns resembling more neutral community dynamics.
+
+```{r}
+library(sads)
+
+mag5 <- c(103, 115, 13, 2, 67, 36, 51, 8, 6, 61, 10, 21,
+          7, 65, 4, 49, 92, 37, 16, 6, 23, 9, 2, 6, 5, 4, 
+          1, 3, 1, 9, 2)
+mag5.bs <- fitsad(mag5, "power") 
+summary(mag5.bs)## no estimated coefficient
+coef(mag5.bs) ## fixed coefficients N and S
+## Diagnostic plots
+par(mfrow=c(2, 2))
+plot(mag5.bs)
+par(mfrow=c(1, 1))
+
+
+sad_input <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species, ogu), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  dplyr::select (!all_of(to_select)) %>% # remove specific taxa rank based on 'to_select' defined above
+  dplyr::select(!all_of(remove)) %>% # remove specific taxa rank based on 'remove' defined above
+  group_by (sample_name, !!! rlang::syms(which_group)) %>%
+  mutate(level_sum = sum(value)) %>%
+  distinct(sample_name, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  dplyr::select(!value) %>%
+  dplyr::select(!environment) %>%
+  pivot_wider (names_from="sample_name", values_from = "level_sum", values_fill = c(level_sum=0)) %>%
+  tibble::column_to_rownames ("Genus")
+
+
+
+convert_to_log10_relative_proportions_and_reconstruct <- function(df) {
+  
+  result <- list()  # Initialize an empty list to store results
+  rownames <- rownames(df)  # Store original row names
+  
+  
+  for (col in names(df)) {
+    col_total <- sum(df[[col]])  # Calculate the total of the current column
+    relative_proportions <- df[[col]] / col_total  # Calculate relative proportions
+    #log10_transformed <- log10(relative_proportions)  # Apply log10 transformation
+    result[[col]] <- relative_proportions  # Store log10 transformed values in the result list
+  }
+  
+  # Reconstruct the original dataframe with row names
+  reconstructed_df <- as.data.frame(result)
+  rownames(reconstructed_df) <- rownames  # Assign original row names
+  return(reconstructed_df)
+  
+}
+###################################################### 
+df <- sad_input
+
+ run_sad_model <- function(df) { 
+   sad_out <- list ()
+   sad_coef <- list ()
+   max_likelihood <- list ()
+   colnames <- colnames (df)
+  
+  
+  for (col in names(df)) {
+    filter_df <- df %>%
+      select (all_of (col)) %>%
+      filter (!!sym(col) > 0)
+  
+    ###### Run SAD analysis #####
+    sad_temp_n <- unlist(as.vector(filter_df[1]))
+    sad <- fitsad(sad_temp_n, "power")
+   ###### Run SAD analysis #####
+    
+    #sad_out[[col]] <- sad
+    sum <- summary (sad)
+    values_out <- as.data.frame(sum@coef)
+    sad_coef[[col]] <- values_out
+    
+    max_likelihood [[col]] <- as.data.frame(sad@min)
+    
+  }
+  
+  #coef_out <- do.call(rbind, values_out)
+  
+  sad_df <- do.call(rbind, sad_coef)
+  maxlike <- do.call(rbind, max_likelihood)
+  #rownames(sad_df) <- colnames
+  
+  #return (sad_out)
+  return (sad_df)
+  #return (maxlike)
+}
+
+ 
+sad_results <- run_sad_model(sad_input)
+
+#sad_results <- as.data.frame(sad_df)
+#maxl <- as.data.frame(maxlike)
+
+sad_results <- sad_results %>%
+  rownames_to_column ("sample_name") %>%
+  left_join ((sawshark_meta %>% dplyr::select(sample_name, environment)), by = "sample_name") 
+
+
+ggplot (sad_results, aes (environment, `z value`)) +
+  geom_boxplot() +
+  theme_mike_doane()
+
+kruskal.test(`z value`~environment, data = out)
+
+#######################################################################################################
+
+run_sad_maxlike <- function(df) { 
+   sad_out <- list ()
+   sad_coef <- list ()
+   max_likelihood <- list ()
+   colnames <- colnames (df)
+  
+  
+  for (col in names(df)) {
+    filter_df <- df %>%
+      select (all_of (col)) %>%
+      filter (!!sym(col) > 0)
+  
+    ###### Run SAD analysis #####
+    sad_temp_n <- unlist(as.vector(filter_df[1]))
+    sad <- fitsad(sad_temp_n, "power")
+   ###### Run SAD analysis #####
+    
+    #sad_out[[col]] <- sad
+    sum <- summary (sad)
+    values_out <- as.data.frame(sum@coef)
+    sad_coef[[col]] <- values_out
+    
+    max_likelihood [[col]] <- as.data.frame(sad@min)
+    
+  }
+  
+  #coef_out <- do.call(rbind, values_out)
+  
+  sad_df <- do.call(rbind, sad_coef)
+  maxlike <- do.call(rbind, max_likelihood)
+  maxlike <- maxlike %>%
+    rename (maxlike = 1)
+  #rownames(sad_df) <- colnames
+  
+  #return (sad_out)
+  #return (sad_df)
+  return (maxlike)
+}
+ 
+maxlike <- run_sad_maxlike(sad_input)
+
+#maxl <- as.data.frame(maxlike)
+
+ml <- maxlike %>%
+  rownames_to_column ("sample_name") %>%
+  left_join ((sawshark_meta %>% dplyr::select(sample_name, environment)), by = "sample_name") 
+
+
+ggplot (ml, aes (environment, maxlike)) +
+  geom_boxplot() +
+  theme_mike_doane()
+
+kruskal.test(maxlike~environment, data = ml)
+
+
+sad_temp_n <- unlist(as.vector(sad_temp[1]))
+sad <- fitsad(sad_temp_n, "power") 
+summary(sad)## no estimated coefficient
+coef(sad) ## fixed coefficients N and S
+## Diagnostic plots
+par(mfrow=c(2, 2))
+plot(sad)
+par(mfrow=c(1, 1))
+```
+
+
+########################################################################################################
+############### Running ACOMBC on taxonomic data comparing sawsharks and water #########################
+########################################################################################################
+
+```{r}
+deseq_meta <- sawshark_meta %>%
+  filter(to_keep =="keep") %>%
+  mutate(sample_column = sample_name) %>%
+  select(sample_name,environment, sample_column) %>%
+  column_to_rownames("sample_column")
+    
+
+st_rows<- sawshark_df_raw %>%
+  pivot_longer (!c(all_of(keep)), names_to = "sample", values_to ="abund") %>%
+  group_by (sample, !! as.name(which_group)) %>%
+  mutate (taxa_abund = sum(abund)) %>%
+  select(-c(all_of(remove), abund)) %>%
+  distinct(sample, !! as.name(which_group), .keep_all = TRUE) %>%
+  ungroup () %>%
+  #mutate (otu = paste0("sp",otu)) %>%
+  #dplyr::select (-all_of(which_group)) %>%
+  pivot_wider (names_from = "sample", values_from = "taxa_abund", values_fill = 0) %>%
+  mutate (taxa_id = row_number(), taxa_id = paste0("taxa_",taxa_id)) %>%
+  relocate (taxa_id)
+  #tibble::column_to_rownames (var = "taxa_id") %>%
+  #dplyr::select(-c(all_of(which_group)))
+
+#taxa_saw <- sawshark_df_raw %>%
+  #pivot_longer (!c(all_of(keep)), names_to = "sample", values_to ="abund") %>%
+  #dplyr::select(-c(sample,abund)) %>%
+  #distinct(!! as.name(which_group), .keep_all = TRUE) %>%
+  #relocate ({{ which_group }}) %>%
+  #dplyr::select(-c(all_of(remove)))
+
+taxa_saw <- st_rows %>%
+  dplyr::select(c(taxa_id, all_of(which_group)))
+taxa_saw <- as.data.frame(taxa_saw)
+# Set row names to TaxonID
+rownames(taxa_saw) <- taxa_saw$taxa_id
+taxa_saw <- taxa_saw %>%
+  dplyr::select (-c(taxa_id)) # Remove TaxonID column from data frame
+# Create tax_table with column names preserved
+taxa_table <- as.matrix(taxa_saw)
+
+st_rows <- st_rows %>%
+  column_to_rownames(var ="taxa_id") %>%
+  dplyr::select(-c(all_of(which_group)))
+
+p_meta <- phyloseq::sample_data(deseq_meta)
+p_otu <- phyloseq::otu_table(st_rows, taxa_are_rows = TRUE)
+p_taxa <- phyloseq::tax_table(taxa_table)
+rownames(p_taxa) <- rownames(st_rows)
+
+po <- phyloseq::phyloseq (p_meta, p_otu, p_taxa)
+#po <- phyloseq(sample_data(deseq_meta), otu_table(st_rows, taxa_are_rows = TRUE), tax_table(taxa_saw))
+
+tse = mia::makeTreeSummarizedExperimentFromPhyloseq(po)
+
+
+######## Running ANCOMBC ############
+taxa_out = ANCOMBC::ancombc(data = tse, assay_name = "counts", 
+              tax_level = "Family", phyloseq = NULL, 
+              formula = "environment", 
+              p_adj_method = "holm", prv_cut = 0.10, lib_cut = 1000, 
+              group = "environment", struc_zero = TRUE, neg_lb = TRUE, tol = 1e-5, 
+              max_iter = 100, conserve = TRUE, alpha = 0.05, global = TRUE,
+              n_cl = 1, verbose = TRUE)
+
+res_out <- taxa_out$res
+res_out <- do.call(cbind, res_out)
+res_sig <- res_out %>%
+  rownames_to_column ("taxa") %>%
+  arrange(-lfc.environmentwater) %>%
+  mutate (sig = ifelse(q_val.environmentwater <= 0.05, "sig","nonsig")) %>%
+  mutate(abs_lfc = abs(lfc.environmentwater)) %>%
+  left_join (taxa_saw %>% rownames_to_column ("taxa"), by = "taxa")
+
+##################################################################################
+##### Find the abundance of groups identified as enriched across all samples #####
+##################################################################################
+
+list_sig_family <- res_sig %>%
+  filter(sig == "sig")
+
+list_sf <- as.character(list_sig_family$Family)
+
+overlay_rank <- sawshark_df %>%
+  pivot_longer (!c(all_of(keep)), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment), by = "sample_name") %>%
+  filter(prop > 0) %>%
+  filter (Family %in% list_sf) %>%
+  group_by (environment, !!! rlang::syms(which_group)) %>%
+  mutate (env_mean = mean(prop)) %>%
+  distinct(environment, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  group_by(environment) %>%
+  mutate(env_rank = rank(-env_mean)) %>%
+  ungroup () %>%
+  arrange(environment, env_rank) %>%
+  mutate (env_rank_fil = ifelse (env_rank >= 21, "Low_abundant", !!sym(which_group))) 
+
+overlay_abund <- sawshark_df %>%
+  pivot_longer (!c(all_of(keep)), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment), by = "sample_name") %>%
+  filter(prop > 0) %>%
+  filter (Family %in% list_sf) %>%
+  left_join (overlay_rank %>% dplyr::select(all_of(which_group), environment, env_rank, env_rank_fil), by = c("environment", "Family")) %>%
+  arrange(rev(environment), env_rank)
+
+temp <- overlay_abund %>%
+  distinct(environment, env_rank, .keep_all =TRUE)
+
+lfc_abund <- ggplot (overlay_abund, aes (sample_name, prop, fill = reorder(env_rank_fil, env_rank))) + #fill = reorder(env_rank_fil, env_rank)
+  geom_bar (position = "stack", stat = "identity") +
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = color_palette) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank())
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("lfc_abund", which_group, "_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("lfc_abund", which_group, "_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+lfc_abund
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()  
+##### Make metadata to overlay #################
+
+overlay <- sawshark_df %>%
+  pivot_longer (!c(all_of(keep)), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment), by = "sample_name") %>%
+  group_by (sample_name, !!! rlang::syms(which_group))
+  
+overlay_mean_abund <- sawshark_df %>%
+  pivot_longer (!c(all_of(keep)), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment), by = "sample_name") %>%
+  group_by (environment, !!! rlang::syms(which_group)) %>%
+  mutate (env_mean = mean(prop)) %>%
+  group_by(environment) %>%
+  filter (Family %in% list_sf) %>%
+  ungroup () %>%
+  dplyr::select (-c(sample_name, prop)) %>%
+  distinct(environment, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  pivot_wider (names_from = "environment", values_from = env_mean, values_fill = 0)
+
+################################################
+######### Plot ANCOMBC enriched microbial groups 
+################################################
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+color_palette64 <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4","dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+
+to_plot <- res_sig %>% 
+  mutate (taxa = factor(taxa, levels = taxa), Family = factor(Family)) %>% 
+  filter(sig == "sig") %>%
+  left_join (sawshark_taxa %>% dplyr::select (Family, Class, Phylum), by ="Family") %>%
+  left_join (overlay_mean_abund %>% select(Family, sawshark,water), by = "Family") %>%
+  distinct(Family, .keep_all = TRUE) %>%
+  top_n(217, wt = sawshark) #217 is all
+
+lfc <- ggplot(to_plot, aes(taxa, lfc.environmentwater, fill = Phylum)) +
+  geom_bar (stat = "identity") +
+  scale_fill_manual (values = color_palette64) +
+  theme_mike_doane () +
+  coord_flip () +
+  guides (fill = guide_legend(ncol = 2))
+
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("lfc_", which_group, "_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("lfc_", which_group, "_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+lfc
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+```
+
+########################################################################################################
+DESeq2 analysis to examine over and under represented microbial groups in sawshark and water microbiomes
+############################################### Taxonomy ###############################################
+########################################################################################################
+
+```{r}
+library(DESeq2)
+##### Make a dataframe with taxa as rows and samples are columns
+deseq_meta <- sawshark_meta %>%
+  filter(to_keep =="keep") %>%
+  select(sample_name,environment)
+
+sawshark_taxa_rows <- sawshark_df_raw %>%
+  pivot_longer (!c(keep), names_to = "sample", values_to ="abund") %>%
+  group_by (sample, !! as.name(which_group)) %>%
+  mutate (taxa_abund = sum(abund)) %>%
+  select(-c(all_of(remove), abund)) %>%
+  distinct(sample, !! as.name(which_group), .keep_all = TRUE) %>%
+  pivot_wider (names_from = "sample", values_from = "taxa_abund", values_fill = 0) %>%
+  tibble::column_to_rownames (var = which_group)
+
+#duplicated_rows <- sawshark_df_raw[duplicated(sawshark_df_raw[["Family"]]) | duplicated(sawshark_df_raw[["Family"]], fromLast = TRUE), ]
+#duplicated_rows <- duplicated_rows %>% arrange(!! as.name("Family")) 
+
+################### Make Deseq Object #############################
+
+dds <- DESeqDataSetFromMatrix (countData = sawshark_taxa_rows,
+                               colData = deseq_meta,
+                               design = ~environment)
+
+#################### Run Deseq ##########################
+
+dds.out <- DESeq(dds)
+
+######
+temp_dds <- estimateSizeFactors(dds)
+temp_counts <- as.data.frame(counts(temp_dds,normalized = TRUE))
+######
+### view results
+res.temp <- results(dds.out)
+summary(res.temp) # negative log2Fold are abundant in sawsharks, while positive log2Fold are abundance in water
+res.padj <- res.temp[order(res.temp$padj),]
+res.log2Folf <- res.temp[order(res.temp$log2FoldChange),]
+
+plotCounts(dds, gene = "g__Mesobacillus", intgroup = "environment")
+plotCounts(dds, gene = "g__Bacillus", intgroup = "environment")
+
+lnames <- res.temp@rownames
+lcolnames <- c('baseMean', 'log2FoldChange', 'lfcSE', 'stat', 'pvalue', 'padj')
+l1<- res.temp@listData$baseMean
+l2 <- res.temp@listData$log2FoldChange
+l3 <- res.temp@listData$lfcSE
+l4 <- res.temp@listData$stat
+l5 <- res.temp@listData$pvalue
+l6 <- res.temp@listData$padj
+
+output.df <- cbind (l1, l2, l3, l4, l5, l6)
+rownames(output.df) <- lnames
+colnames(output.df) <- lcolnames
+output.df <- as.data.frame(output.df)
+output.df <- output.df %>%
+  mutate(sig = ifelse (abs(log2FoldChange) > 1 & padj < 0.05, "yes", "no")) %>%
+  mutate(group = ifelse (log2FoldChange > 0, "water", "sawshark"))
+
+ggplot (output.df, aes (log2FoldChange, -log10(pvalue))) +
+  geom_point (aes (color = sig)) +
+  theme_mike_doane()
+
+#### Plot Counts ###
+par (mfrow=c(1,1))
+plotCounts (dseqObjs[[2]], gene = 'g__Mesobacillus', intgroup = 'environment')
+
+##### Volcano Plot ####
+##### values to the left (negative) on x axis are saw sharks and left (positive) are water microbes
+#reset par
+par(mfrow=c(1,1))
+# Make a basic volcano plot
+with(res.temp, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot", xlim=c(-10,30)))
+
+# Add colored points: blue if padj<0.01, red if log2FC>1 and padj<0.05)
+with(subset(res.temp, padj<0.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res.temp, padj<0.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+
+
+sig_deseq <- output.df %>%
+  rownames_to_column ("taxa") %>%
+  filter(sig == "yes")
+sig_deseq <- as.character(sig_deseq$taxa)
+  
+saw_ranking <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>% 
+  filter(!!sym(which_group) %in% sig_deseq) %>%
+  group_by (environment, !!! rlang::syms(which_group)) %>%
+  summarise (mean_prop_env = mean(prop)) %>%
+  group_by(environment) %>%
+  mutate(env_rank = rank(-mean_prop_env)) %>%
+  arrange(environment, env_rank)
+
+long_df_bar <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  left_join ((saw_ranking %>% select(environment, !! as.name (which_group), env_rank)), by = setNames (c(which_group,"environment"),c(which_group, "environment"))) %>%
+  filter(!!sym(which_group) %in% sig_deseq) %>%
+  mutate (!!paste0(which_group, "_group") := ifelse (env_rank >= 21, "Low_abundant", !!sym(which_group)))
+
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+column_color <- paste0(which_group, "_group")
+length_val <- dim(long_df_bar %>% distinct(!! as.name (column_color)))
+length_color <- length_val[1]
+c <- color_palette[1:length_color]
+
+#library(viridisLite)
+#v <- viridis(30)
+
+if (which_group == "Family") {
+  bar_chart_df <- long_df_bar %>% mutate (!!paste0(which_group,"_group") := forcats::fct_recode(!! as.name(paste0(which_group,"_group")), f__Unk__Cand_Jorgensenbacteris ="f__Unkown__Candidatus Jorgensenbacteria"))
+} else {
+  bar_chart_df <- long_df_bar #%>% mutate (!!paste0(which_group, "_group") := as.factor(!!past0(which_group, "_group")))
+}
+
+
+g_saw <- ggplot (bar_chart_df %>% filter (environment == "sawshark"), aes (sample_name, prop, fill = reorder(!! as.name(paste0(which_group, "_group")), env_rank))) +
+  geom_bar (position="stack", stat = "identity") +
+  #facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank())
+
+g_water <- ggplot (bar_chart_df %>% filter (environment == "water"), aes (sample_name, prop, fill = reorder(!! as.name(paste0(which_group, "_group")), env_rank))) +
+  geom_bar (position="stack", stat = "identity") +
+  #facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank())
+
+
+cowplot::plot_grid (g_saw, g_water,
+           labels = "AUTO", align = "v", ncol =1)
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("barchart_", which_group, "_deseq_rank20_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("barchart_", which_group, "_deseq_rank20_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+cowplot::plot_grid (g_saw, g_water,
+           labels = "AUTO", align = "v", ncol =1)
+
+dev.off()
+###### PCA on normalized counts ######
+vsdata <- vst(dds.out, blind=FALSE, nsub =200)
+plotPCA(vsdata, intgroup="environment")
+
+```
+
+Combine sawshark counts, neutral, and logfold data together
+```{r}
+sawshark_merged <- sawshark_df %>%
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(level_sum), level_prop = level_sum/sample_total) %>%
+  select(-sample_total) %>%
+
+```
+############################################################################
+Create a dataframe calculating summary statisitics across the whole datasets
+############################################################################
+
+```{r}
+sawshark_group <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  dplyr::select (!all_of(to_select)) %>% #### Change this one c(Genus, Species)
+  arrange(sample_name) %>%
+  group_by (sample_name) %>%
+  mutate (sample_sum = sum(value)) %>% ### sum values across the selected taxonomic group within each sample
+  arrange(sample_name) %>%
+  ungroup() %>%
+  group_by (sample_name, !!! rlang::syms(which_group)) %>% #### Change this one
+  #group_by(sample, Family) %>%
+  mutate (taxa_sum = sum(value), taxa_prop = taxa_sum/sample_sum) %>% ### find the sum of the selected taxonomic group and proportion of that taxonomic group 
+  distinct (sample_name, !!! rlang::syms(which_group), .keep_all=TRUE) %>% #### Reduce dataset to create unqiue taxa per sample
+  arrange(sample_name) %>%
+  ungroup () %>%
+  group_by (environment, !!! rlang::syms(which_group)) %>% #### 
+  mutate (env_mean = mean(taxa_prop), env_sd = sd(taxa_prop), env_se = sd(taxa_prop)/sqrt(length(taxa_prop)), env_freq = sum(taxa_sum != 0), freq_perc = env_freq/length(taxa_prop)) %>% # find the mean, sd, and se of the taxa proportion across env.
+  arrange(sample_name) %>%
+  ungroup() %>%
+  group_by (environment) %>%
+  mutate (env_rank = dense_rank(desc(env_mean)))
+  
+
+#na_df <- sawshark_class[!complete.cases(sawshark_class),]
+
+#write.csv (sawshark_class, "sawshark_class.csv")
+
+transform <- function(x) {
+  analogue::tran(x, method = "rootroot")
+}
+
+sc <- as.data.frame(transform(sawshark_group$env_mean))
+names(sc)[1] <- "fourthroot"
+
+sawshark_class <- cbind (sawshark_group, sc)
+
+
+```
+
+##################################
+What is shared across the dataset?
+##################################
+
+```{r}
+
+
+venn1 <- sawshark_df %>% #dataset to be analysed
+  pivot_longer (!c(keep), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  filter (value > 0) %>% 
+  filter (environment == "sawshark") %>%
+  dplyr::select(-c(sample_name, value)) %>%
+  mutate (Genus = as.character(Genus)) %>%
+  distinct(Genus)
+venn1 <- as.list (venn1)
+
+venn2 <- sawshark_df %>% #dataset to be analysed
+  pivot_longer (!c(keep), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  filter (value > 0) %>% 
+  filter (environment == "water") %>%
+  dplyr::select(-c(sample_name, value)) %>%
+  mutate (Genus = as.character(Genus)) %>%
+  distinct(Genus)
+venn2 <- as.list(venn2)
+  
+
+ss <- list (
+  sawshark = venn1$Genus,
+  water = venn2$Genus)
+
+ggvenn::ggvenn(
+  ss, 
+  fill_color = c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF"),
+  stroke_size = 0.5, set_name_size = 4
+  )
+
+
+if (getwd() != working_dir) { 
+setwd(paste0(working_dir,"/Figures"))
+}
+png(file=paste0("venn_diagram_", which_group, ".png"), res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+ggvenn::ggvenn(
+  ss, 
+  fill_color = c("#0073C2FF", "#EFC000FF", "#868686FF", "#CD534CFF"),
+  stroke_size = 0.5, set_name_size = 4
+  )
+
+dev.off()
+
+  
+venn_groups <- sawshark_df %>% #dataset to be analysed
+  pivot_longer (!c(keep), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  group_by (environment, Genus) %>%
+  mutate (group_sum = sum(value)) %>%
+  mutate (value_pa = ifelse(group_sum > 0, 1, 0)) %>%
+  dplyr::select(-c(sample_name, value, group_sum)) %>%
+  distinct(environment, !! as.name(which_group), .keep_all = TRUE) %>%
+  pivot_wider (names_from = "environment", values_from = "value_pa") %>%
+  rowwise () %>%
+  mutate (venn_check = sawshark-water) %>%
+  mutate (venn_groups = ifelse(venn_check > 0, "sawshark", ifelse(venn_check < 0, "water", "shared"))) %>%
+  dplyr::select(-c(venn_check, sawshark, water)) %>%
+  dplyr::select(-all_of (remove))
+
+venn_bar <- sawshark_df %>% #dataset to be analysed
+  pivot_longer (!c(keep), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  left_join (venn_groups, by = "Genus")
+
+venn_filter <- "shared"
+
+venn_rank <- venn_bar %>% #dataset to be analysed
+  filter (venn_groups %in% venn_filter) %>%
+  group_by (sample_name, !! as.name (which_group)) %>%
+  mutate(group_prop = sum(value)) %>%
+  ungroup () %>%
+  group_by (environment, !! as.name(which_group)) %>%
+  mutate(mean_group_prop = mean(group_prop)) %>%
+  distinct(environment, !! as.name (which_group), .keep_all = TRUE) %>%
+  group_by(environment) %>%
+  arrange(-mean_group_prop) %>%
+  mutate(rank = rank (-mean_group_prop))
+  
+
+barchart <- venn_bar %>%
+  left_join ((venn_rank %>% dplyr::select(all_of(which_group), environment, rank)), by = c("environment", "Genus")) %>%
+  mutate (!!paste0(which_group, "_group") := ifelse (rank >= 21, "Low_abundant", !!sym(which_group)))
+
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+column_color <- paste0(which_group, "_group")
+length_val <- dim(barchart %>% distinct(!! as.name (column_color)))
+length_color <- length_val[1]
+c <- color_palette[1:length_color]
+
+#library(viridisLite)
+#v <- viridis(30)
+
+
+g <- ggplot (barchart, aes (sample_name, value, fill = reorder(!! as.name (paste0(which_group, "_group")), rank))) +
+  geom_bar (position="stack", stat = "identity") + ## position = "fill"
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank())
+
+g
+
+
+if (getwd() != working_dir) { 
+setwd(paste0(working_dir,"/Figures"))
+}
+png(file=paste0("shared_", which_group, ".png"), res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+g
+
+dev.off()
+```
+
+####################################################
+Additive partitioning of variance - Adipart analysis
+Figure 1 ###########################################
+####################################################
+
+```{r}
+# sawshark_df
+# sawshark_meta
+setwd ("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures/")
+
+adipart_meta <- sawshark_meta %>%
+  dplyr::select (c(sample_name, environment)) %>%
+  mutate (sample_name = factor(sample_name), environment = factor(environment))
+
+##### Taxa by samples #####
+sawshark_sbyt_wide <- fil_ss_df %>%
+  select(-all_of(remove)) %>%
+  select(-c(environment, sample_total, taxa_prop)) %>%
+  pivot_wider (names_from=which_group, values_from = "value", values_fill = 0) %>%
+  tibble::column_to_rownames ("sample_name")
+
+
+adipart_out <- vegan::adipart(sawshark_sbyt_wide ~ sample_name + environment, data = adipart_meta, index = "richness", relative = TRUE, nsimul = 100, weight = "unif") #weight "prop"; relative = FALSE;
+#vegan::adipart(sawshark_df ~ sample_name + environment, data = adipart_meta, index = "richness", relative = FALSE, nsimul = 100, weight = "unif") #weight "prop"; relative = FALSE;
+
+#vegan::adipart(sawshark_df ~ sample_name + environment, data = adipart_meta, index = "richness", relative = TRUE, nsimul = 100, weight = "prop") #weight "prop"; relative = FALSE;
+#vegan::adipart(sawshark_df ~ sample_name + environment, data = adipart_meta, index = "shannon", relative = TRUE, nsimul = 100, weight = "unif") #weight "prop"; relative = FALSE;
+#vegan::adipart(sawshark_df ~ sample_name + environment, data = adipart_meta, index = "shannon", relative = TRUE, nsimul = 100, weight = "prop") #weight "prop"; relative = FALSE;
+#vegan::adipart(sawshark_df ~ sample_name + environment, data = adipart_meta, index = "simpson", relative = TRUE, nsimul = 100, weight = "unif") #weight "prop"; relative = FALSE;
+#vegan::adipart(sawshark_df ~ sample_name + environment, data = adipart_meta, index = "simpson", relative = TRUE, nsimul = 100, weight = "prop") #weight "prop"; relative = FALSE;
+
+#################################################### Sawsharks #########################################################################
+sawshark_sbyt_wide <- fil_ss_df %>%
+  select(-all_of(remove)) %>%
+  filter (environment == "sawshark") %>%
+  select(-c(environment, sample_total, taxa_prop, Genus, Species)) %>%
+  pivot_wider (names_from=ogu, values_from = "value", values_fill = 0) %>%
+  tibble::column_to_rownames ("sample_name")
+
+adipart_filter <- sawshark_meta %>%
+  filter(environment == "sawshark") %>%
+  dplyr::select (c(sample_name, environment)) %>%
+  mutate (sample_name = factor(sample_name), environment = factor(environment))
+adipart_saw <- vegan::adipart(sawshark_sbyt_wide ~ sample_name, data = adipart_filter, index = "richness", relative = TRUE, nsimul = 100, weight = "unif") #weight "prop"; relative = FALSE;
+
+################################################### Water   ##########################################################################
+sawshark_sbyt_wide <- fil_ss_df %>%
+  select(-all_of(remove)) %>%
+  filter (environment == "water") %>%
+  select(-c(environment, sample_total, taxa_prop, Genus, Species)) %>%
+  pivot_wider (names_from=ogu, values_from = "value", values_fill = 0) %>%
+  tibble::column_to_rownames ("sample_name")
+
+adipart_filter <- sawshark_meta %>%
+  filter(environment == "water") %>%
+  dplyr::select (c(sample_name, environment)) %>%
+  mutate (sample_name = factor(sample_name), environment = factor(environment))
+adipart_water <- vegan::adipart(sawshark_sbyt_wide ~ sample_name, data = adipart_filter, index = "richness", relative = TRUE, nsimul = 100, weight = "unif") #weight "prop"; relative = FALSE;
+#############################################################################################################################
+###### Cacluate richness across different groups #####
+#############################################################################################################################
+
+#### Sample richness - Alpha1
+#richness_sample <- vegan::specnumber(sawshark_sbyt_wide)
+r_sample_df <- as.data.frame(richness_df %>% group_by(environment) %>% summarise(mean(richness_sample))) %>% rename (richness_sample = 2)
+#r_sample_list <- c(r_sample_df[1,2],r_sample_df[2,2])
+
+#### Environment richness - Alpha 2
+#richness_env <- vegan::specnumber(sawshark_sbyt_wide, group = adipart_meta$environment)
+r_env_df <- as.data.frame(richness_env) 
+r_env_df <- r_env_df %>% rownames_to_column("environment") %>% mutate(environment = factor(environment))
+#r_env_list <- c(as.data.frame(richness_env)[1,1], as.data.frame(richness_env)[2,1])
+
+#### richness_gamma
+adipart_meta_gamma <- adipart_meta %>%
+  mutate (gamma_group = "sawshark_microbiome")
+#richness_gamma <- vegan::specnumber(sawshark_sbyt_wide, group = adipart_meta_gamma$gamma_group)
+gamma <- as.data.frame(richness_gamma)
+
+r_gamma_df <- data.frame (environment = c("sawshark", "water"), richness_gamma = c(gamma[1,1], gamma[1,1]))
+r_gamma_df <- r_gamma_df %>% mutate (environment = factor(environment))
+#r_gamma_list <- c(as.data.frame(richness_gamma)[1,1], as.data.frame(richness_gamma)[2,1])
+
+richness_df <- as.data.frame(richness_sample)
+richness_df <- richness_df %>% 
+  tibble::rownames_to_column ("sample_name") %>%
+  left_join (adipart_meta, by = "sample_name") %>%
+  left_join ((sawshark_meta %>% select(sample_name, sequence_length, unique)), by = "sample_name")
+
+
+ggplot (richness_df, aes (sample_name, y = richness_sample, group = environment)) +
+  geom_point (size =7, aes(color = unique, shape = sequence_length)) +
+  theme_mike_doane () +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  facet_grid (~environment, scales = "free", switch = "x", space = "free_x") +
+  theme(strip.placement = "outside")
+
+
+g1 <-ggplot (richness_df, aes (sample_name, y = richness_sample, color = unique, shape = sequence_length)) +
+  geom_point (size = 7) +
+  facet_grid (~environment, scales = "free") +
+  geom_hline (data = r_sample_df, linetype = "dashed", color = "red", aes(yintercept = richness_sample)) + #saw_richness[1,1]
+  geom_hline (data = r_env_df, linetype = "dashed", color = "blue", aes(yintercept = richness_env)) + #as.data.frame(richness_env)[1,1]
+  geom_hline (data = r_gamma_df, linetype = "solid", color = "black", aes(yintercept = richness_gamma)) + #as.data.frame(richness_gamma)[1,1]
+  scale_y_continuous ("Sample Richness", limits = c(1000,50000,10000)) +
+  theme_minimal () +
+  xlab("Samples")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 10),
+        axis.title.x = element_text (size = 15),
+        axis.text.y = element_text(size=10),
+        axis.title.y = element_text(size=15),) +
+  theme(strip.placement = "outside",
+        legend.position = "none")
+
+
+
+g3_legend <- ggplot ((richness_df %>% filter(environment =="water")), aes (sample_name, y = richness_sample, color = unique, shape = sequence_length)) +
+  geom_point (size = 7) +
+  geom_hline (yintercept = water_richness[1,1], linetype = "dashed", color = "red") +
+  geom_hline (yintercept =  as.data.frame(richness_env)[2,1], linetype = "dashed", color = "blue") +
+  geom_hline (yintercept =  as.data.frame(richness_gamma)[1,1], linetype = "solid", color = "black") +
+  scale_y_continuous (limits = c(1000,50000, 10000)) +
+  theme_minimal () +
+  xlab("Water") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 10),
+        axis.title.x = element_text (size = 15),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y=element_blank(),
+        legend.position = "none") +
+  theme(strip.placement = "outside")
+
+legend <- ggpubr::get_legend(g3_legend)
+g3 <- ggpubr::as_ggplot(legend)
+
+cowplot::plot_grid(g1,g2)
+cowplot::plot_grid(g3)
+
+dunn.test (richness_df$richness_sample, richness_df$environment, method = "bh")
+
+ggplot (richness_df, aes (environment, richness_sample)) +
+  geom_boxplot() +
+  theme_minimal()
+
+
+#################################### Make barchart for AdiPart results that include both Sawsharks and Water samples ##############################
+adipart_df <- data.frame(
+  Diversity = c("alpha1", "alpha2, gamma, beta1","beta2"),
+  Obs = as.data.frame(adipart_out$oecosimu$statistic)[,1],
+  Null = as.data.frame(adipart_out$oecosimu$means)[,1]
+)
+
+adipart_obs <- as.data.frame(adipart_out$oecosimu$statistic)
+adipart_null <- as.data.frame(adipart_out$oecosimu$means)
+adipart_df <- cbind(adipart_obs, adipart_null)
+adipart_df <- adipart_df %>%
+  rownames_to_column ("Diversity") %>%
+  rename (Obs =2, Null = 3)
+
+adipart_df_long <- adipart_df %>%
+  pivot_longer (cols = c(2,3), names_to ="group", values_to="value") %>%
+  filter (Diversity %in% c("alpha.1", "beta.1", "beta.2")) %>%
+  mutate(group = forcats::fct_relevel(group, c("Obs","Null")), Diversity = forcats::fct_relevel(Diversity, c("beta.2","beta.1","alpha.1")), value = as.numeric(value), group = factor(group))
+
+g2 <- ggplot(adipart_df_long, aes(group, value)) +
+  #geom_bar (stat="identity", position=position_stack(reverse=TRUE)) +
+  ggalluvial::geom_flow (aes(alluvium = Diversity), alpha = 0.9, lty =2, fill = "white", color = "black", curve_type = "linear", width = 0.5)+
+  geom_col (aes(fill = Diversity), width = 0.5, color = "black") +
+  scale_fill_manual(NULL, breaks = c("beta.2","beta.1","alpha.1"),
+                    values=  c("red","blue", "orange"))+
+  scale_y_continuous(expand = c(0,0)) +
+  xlab("Groups") +
+  ylab("Percent of total partitioned richness") +
+  theme_minimal () +
+  theme(axis.text.x = element_text(size = 10),
+        axis.title.x = element_text (size = 15),
+        axis.text.y = element_text(size=10),
+        axis.title.y = element_text(size=15))
+
+
+
+cowplot::plot_grid (g1, g2,
+           labels = "AUTO")
+
+if (getwd() != working_dir) { 
+setwd(paste0(working_dir,"/Figures"))
+}
+png(file="adipart.png"), res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+g
+
+dev.off()
+#################################### Make barchart for AdiPart results that include individually Saw sharks or Water ##############################
+adipart_df <- data.frame(
+  Diversity = c("alpha1", "gamma", "beta1"),
+  Obs = as.data.frame(adipart_out$oecosimu$statistic)[,1],
+  Null = as.data.frame(adipart_out$oecosimu$means)[,1]
+)
+
+adipart_obs <- as.data.frame(adipart_out$oecosimu$statistic)
+adipart_null <- as.data.frame(adipart_out$oecosimu$means)
+adipart_df <- cbind(adipart_obs, adipart_null)
+adipart_df <- adipart_df %>%
+  rownames_to_column ("Diversity") %>%
+  rename (Obs =2, Null = 3)
+
+adipart_df_long <- adipart_df %>%
+  pivot_longer (cols = c(2,3), names_to ="group", values_to="value") %>%
+  filter (Diversity %in% c("alpha.1", "beta.1")) %>%
+  mutate(group = forcats::fct_relevel(group, c("Obs","Null")), Diversity = forcats::fct_relevel(Diversity, c("beta.1","alpha.1")), value = as.numeric(value), group = factor(group))
+
+g_saw <- ggplot(adipart_df_long, aes(group, value)) +
+  #geom_bar (stat="identity", position=position_stack(reverse=TRUE)) +
+  ggalluvial::geom_flow (aes(alluvium = Diversity), alpha = 0.9, lty =2, fill = "white", color = "black", curve_type = "linear", width = 0.5)+
+  geom_col (aes(fill = Diversity), width = 0.5, color = "black") +
+  scale_fill_manual(NULL, breaks = c("beta.2","beta.1","alpha.1"),
+                    values=  c("red","blue", "orange"))+
+  scale_y_continuous(expand = c(0,0)) +
+  xlab("Groups") +
+  ylab("Percent of total partitioned richness") +
+  theme_minimal () +
+  theme(axis.text.x = element_text(size = 10),
+        axis.title.x = element_text (size = 15),
+        axis.text.y = element_text(size=10),
+        axis.title.y = element_text(size=15))
+
+
+adipart_df <- data.frame(
+  Diversity = c("alpha1", "gamma", "beta1"),
+  Obs = as.data.frame(adipart_out$oecosimu$statistic)[,1],
+  Null = as.data.frame(adipart_out$oecosimu$means)[,1]
+)
+
+adipart_obs <- as.data.frame(adipart_water$oecosimu$statistic)
+adipart_null <- as.data.frame(adipart_water$oecosimu$means)
+adipart_df <- cbind(adipart_obs, adipart_null)
+adipart_df <- adipart_df %>%
+  rownames_to_column ("Diversity") %>%
+  rename (Obs =2, Null = 3)
+
+adipart_df_long <- adipart_df %>%
+  pivot_longer (cols = c(2,3), names_to ="group", values_to="value") %>%
+  filter (Diversity %in% c("alpha.1", "beta.1")) %>%
+  mutate(group = forcats::fct_relevel(group, c("Obs","Null")), Diversity = forcats::fct_relevel(Diversity, c("beta.1","alpha.1")), value = as.numeric(value), group = factor(group))
+
+g_water <- ggplot(adipart_df_long, aes(group, value)) +
+  #geom_bar (stat="identity", position=position_stack(reverse=TRUE)) +
+  ggalluvial::geom_flow (aes(alluvium = Diversity), alpha = 0.9, lty =2, fill = "white", color = "black", curve_type = "linear", width = 0.5)+
+  geom_col (aes(fill = Diversity), width = 0.5, color = "black") +
+  scale_fill_manual(NULL, breaks = c("beta.2","beta.1","alpha.1"),
+                    values=  c("red","blue", "orange"))+
+  scale_y_continuous(expand = c(0,0)) +
+  xlab("Groups") +
+  ylab("Percent of total partitioned richness") +
+  theme_minimal () +
+  theme(axis.text.x = element_text(size = 10),
+        axis.title.x = element_text (size = 15),
+        axis.text.y = element_text(size=10),
+        axis.title.y = element_text(size=15))
+
+cowplot::plot_grid (g_saw, g_water,
+           labels = "AUTO")
+
+if (getwd() != working_dir) { 
+setwd(paste0(working_dir,"/Figures"))
+}
+png(file="adipart_environment.png", res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+
+cowplot::plot_grid (g_saw, g_water,
+           labels = "AUTO")
+
+dev.off()
+
+################################################################################
+######## Alluvial type figure to display above figure ##########################
+######## SKIP this plot for the moment #########################################
+ggplot(adipart_df_long, aes(group, value, fill = Diversity)) +
+  geom_alluvium (aes(alluvium = Diversity), alpha = 0.9, color = "black")+
+  #geom_col (aes(fill = Diversity), width = 0.5, color = "black") +
+  scale_fill_manual(NULL, breaks = c("beta2","beta1","alpha1"),
+                    values=  c("red","blue", "orange"))+
+  scale_y_continuous(expand = c(0,0)) +
+  cowplot::theme_minimal_hgrid()
+
+color_groups <- c(alpha1 = "orange", beta1 = "blue", beta2 = "red")
+ggplot(adipart_df, aes(Null, Obs, color = Diversity)) +
+  geom_point(size = 10) +
+  scale_color_manual (values = color_groups) +
+  geom_abline (slope =1, linetype="dashed", color ="red") +
+  theme_minimal() +
+  guides(colour = guide_legend(reverse=T)) +
+  theme(axis.text.x = element_text(size = 10),
+        axis.title.x = element_text (size = 15),
+        axis.text.y = element_text(size=10),
+        axis.title.y = element_text(size=15))
+################################################################################
+
+g3 <- ggplot (adipart_df_long %>% pivot_wider (names_from = "group", values_from = "value"), aes (Obs, Null)) +
+  geom_point (size = 5, aes (color = Diversity)) +
+  scale_color_manual(NULL, breaks = c("beta.2","beta.1","alpha.1"),
+                    values=  c("red","blue", "orange"))+
+  scale_x_continuous(expand = c(0, 0), limits = c(0,0.5)) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0,0.6))+
+  geom_abline (slope = 1, intercept = 0) +
+  theme_mike_doane()
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+png(file="diversity_distribution.png", res=600, width=6000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+cowplot::plot_grid (g1, g2,g3,
+           labels = "AUTO")
+dev.off()
+cowplot::plot_grid (g1, g2,g3,
+           labels = "AUTO")
+```
+
+####################################################
+Beta-diversity analysis ############################
+Figure 1 ###########################################
+####################################################
+
+```{r}
+library(analogue)
+fourth <- function(x) {
+  analogue::tran(x, method = "rootroot")
+}
+
+results <- run_taxa_code("Phylum", "Yes", "keep")
+
+sawshark_df <- results$sawshark_df
+sawshark_df_raw <- results$sawshark_df_raw
+which_group <- results$which_group
+filter <- results$filter
+samples <- results$samples
+to_select <- results$to_select
+remove <- results$remove
+keep <- results$keep
+
+
+
+pco_meta <- sawshark_meta %>%
+  filter(to_keep %in% samples) %>%
+  dplyr::select (c(sample_name, environment, unique, sequence_length, to_keep)) %>%
+  mutate (sample_name = factor(sample_name), environment = factor(environment))
+
+###################################### data frame for input into PCoA and PERMANOVA ########
+ss_pco_long <- sawshark_df %>% # samples as rows and taxa as columnes
+  pivot_longer (!all_of(keep), names_to ="sample_name", values_to = "prop") %>%
+  left_join (pco_meta, by = "sample_name") %>%
+  filter (to_keep %in% samples) %>%
+  select(!c(all_of(remove), environment, unique, sequence_length, to_keep)) %>%
+  distinct(sample_name,!! as.name(which_group),.keep_all=T) %>%
+  mutate (tran = fourth(prop)) %>%
+  #mutate (tran = prop) %>%
+  dplyr::rename(tran = 4) %>%
+  select(!! as.name(which_group), sample_name, tran) %>%
+  pivot_wider (names_from = which_group, values_from = "tran", values_fill = 0) %>%
+  column_to_rownames ("sample_name")
+
+#temp_ss_pco <- temp_counts %>% # from DeSeq2 output
+  #rownames_to_column ("taxa") %>%
+  #pivot_longer (!taxa, names_to = "sample_name", values_to ="values") %>%
+  #group_by (sample_name) %>%
+  #mutate(sample_total = sum(values), norm_prop = values/sample_total) %>%
+  #dplyr::select(-c(sample_total, values)) %>%
+  #pivot_wider (names_from = "taxa", values_from = "norm_prop") %>%
+  #column_to_rownames("sample_name")
+
+############################################################################################
+#adonis_df <- sawshark_df %>%
+  #select(-all_of(remove)) %>%
+  #arrange(!! as.name(which_group)) %>%
+  #column_to_rownames (which_group)
+
+ss_pco_dist <- vegan::vegdist(ss_pco_long, method="bray") # use Deseq results? temp_ss_pco 
+ss_labels <- as.data.frame(attr(ss_pco_dist, "Labels"))
+
+pcoa <- vegan::wcmdscale(ss_pco_dist, eig = TRUE)
+
+pcoa_df <- as.data.frame(pcoa$points)
+
+pcoa_df <- pcoa_df %>%
+  rownames_to_column ("sample_name") %>%
+  dplyr::rename(PCO1 = 2, PCO2 = 3) %>%
+  left_join (pco_meta, by = "sample_name")
+
+g <-ggplot (pcoa_df, aes (PCO1, PCO2, label = sample_name)) +
+  geom_point (size = 8,aes (color = environment, shape = sequence_length)) +
+  ggrepel::geom_text_repel (xlim = c(NA,Inf), ylim = c(-Inf, Inf), min.segment.length = Inf) + #xlim = c(NA,Inf), ylim = c(-Inf, Inf), min.segment.length = Inf,
+  #ggrepel::geom_label_repel ()+
+  theme_mike_doane()
+
+#g<-ggplot(data.frame(pcoa$points), aes (Dim1, Dim2)) +
+  #geom_point () +
+  #theme_mike_doane()
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("pco_taxa_", which_group, "_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("pco_taxa_", which_group, "_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+g
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+adonis_out <- vegan::adonis2 (ss_pco_dist ~ environment, data = pco_meta, permutations = 9999)
+adonis_list <-list()
+adonis_list[[1]] <- adonis_out$Df
+adonis_list[[2]] <- adonis_out$SumOfSqs
+adonis_list[[3]] <- adonis_out$R2
+adonis_list[[4]] <- adonis_out$F
+adonis_list[[5]] <- adonis_out$`Pr(>F)`
+adonis_out_df <- as.data.frame(do.call(cbind, adonis_list))
+colnames(adonis_out_df) <- c("Df", "SumOfSqs", "R2", "F", "Pr(>F)")
+rownames(adonis_out_df) <- c("environment", "Residual", "Total")
+print(adonis_out_df)
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+write.csv(adonis_out_df, file=paste0("permanova_", which_group, "_filtered.csv"), row.names = TRUE)
+} else if (filter == "No") { 
+write.csv(adonis_out_df, file=paste0("permanova_", which_group, "_unfiltered.csv"), row.names = TRUE)
+  }
+
+
+print(adonis_out)
+adonis_out <- adonis2 (adonis_df ~ environment, data = pco_meta, permutations = 999)
+####################################################
+
+
+beta_out <- vegan::betadisper(ss_pco_dist, pco_meta$environment, type = c("centroid"), bias.adjust = FALSE,
+       sqrt.dist = FALSE, add = FALSE)
+
+plot(beta_out)
+boxplot(beta_out)
+
+vegan::adonis2(dist(beta_out$distances) ~ pco_meta$environment)
+anova(beta_out)
+TukeyHSD(beta_out)
+
+
+beta_out_df <- as.data.frame (beta_out$distances)
+
+beta_out_df <- beta_out_df%>%
+  rownames_to_column ("sample_name") %>%
+  left_join (pco_meta, by ="sample_name")
+kruskal.test(`beta_out$distances` ~ environment, data = beta_out_df)
+
+ggplot(beta_out_df, aes (environment, beta_out$distances)) +
+  geom_boxplot() +
+  theme_mike_doane()
+
+median <-beta_out_df %>%
+  group_by (environment) %>%
+  summarise (median(`beta_out$distances`))
+
+saw_med <- median[[1,2]]
+wat_med <- median [[2,2]]
+g1 <-ggplot(beta_out_df %>% filter (environment == "sawshark"), aes (sample_name, `beta_out$distances`, color = environment)) +
+  geom_point (size = 10) +
+  #scale_color_manual(values = "dodgerblue3") +
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") +
+  geom_hline (linetype = "dashed", color = "red", aes(yintercept = saw_med)) + #saw_richness[1,1]
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 10),
+        axis.title.x = element_text (size = 15),
+        axis.text.y = element_text(size=10),
+        axis.title.y = element_text(size=15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  theme(strip.placement = "outside",
+        legend.position = "none")
+
+g2 <- ggplot(beta_out_df%>%filter(environment == "water"), aes (sample_name, `beta_out$distances`, color = environment)) +
+  geom_point (size = 10) +
+  #scale_color_manual(values = "#FF7F00") +
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") +
+  geom_hline (linetype = "dashed", color = "red", aes(yintercept = wat_med)) + #saw_richness[1,1]
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 10),
+        axis.title.x = element_text (size = 15),
+        axis.text.y = element_text(size=10),
+        axis.title.y = element_text(size=15),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) +
+  theme(strip.placement = "outside",
+        legend.position = "none")
+
+cowplot::plot_grid (g1,g2)
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("taxa_",which_group,"_filter_dispersion.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("taxa_",which_group, "_no_filter_dispersion.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+cowplot::plot_grid (g1,g2)
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+```
+
+
+################################################################################
+######## Make barcharts to visually show the distribution of taxa ##############
+################################################################################
+```{r}
+# sawshark_df is the long format dataset
+# sawshark_meta
+
+###############################################
+############### Start here ####################
+
+saw_ranking <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>% 
+  group_by (environment, !!! rlang::syms(which_group)) %>%
+  summarise (mean_prop_env = mean(prop)) %>%
+  group_by(environment) %>%
+  mutate(env_rank = rank(-mean_prop_env)) %>%
+  arrange(environment, env_rank)
+
+long_df_bar <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  left_join ((saw_ranking %>% select(environment, !! as.name (which_group), env_rank)), by = setNames (c(which_group,"environment"),c(which_group, "environment"))) %>%
+  mutate (!!paste0(which_group, "_group") := ifelse (env_rank >= 21, "Low_abundant", !!sym(which_group))) #%>%
+  #mutate (!! as.name(paste0(which_group, "_group")) = factor(!! as.name(paste0(which_group, "_group"))))
+  #group_by (environment, sample_name, !! as.name(paste0(which_group,"_group"))) %>%
+  #mutate (new_prop = sum(prop)) %>%
+  #mutate (new_rank = ifelse (env_rank >= 21, 21, env_rank)) %>%
+  #select(-c(prop,env_rank))
+
+
+#Glasbey = data.frame(Polychrome::glasbey.colors(22))
+#gl <- Glasbey[,1]
+
+################################################################################
+##### Make barchart based on percent aross entire dataset
+################################################################################
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+column_color <- paste0(which_group, "_group")
+length_val <- dim(long_df_bar %>% distinct(!! as.name (column_color)))
+length_color <- length_val[1]
+c <- color_palette[1:length_color]
+
+#library(viridisLite)
+#v <- viridis(30)
+
+if (which_group == "Family") {
+  bar_chart_df <- long_df_bar %>% mutate (!!paste0(which_group,"_group") := forcats::fct_recode(!! as.name(paste0(which_group,"_group")), f__Unk__Cand_Jorgensenbacteris ="f__Unkown__Candidatus Jorgensenbacteria"))
+} else {
+  bar_chart_df <- long_df_bar #%>% mutate (!!paste0(which_group, "_group") := as.factor(!!past0(which_group, "_group")))
+}
+
+g <- ggplot (bar_chart_df, aes (sample_name, prop, fill = reorder(!! as.name(paste0(which_group, "_group")), env_rank))) +
+  geom_bar (position="fill", stat = "identity") +
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank())
+
+
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("barchart_", which_group, "_rank20_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("barchart_", which_group, "_rank20_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+g
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+################################################################################
+##### Make a figure to look at taxa in Bacilliota #######
+################################################################################
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+column_color <- paste0(which_group, "_group")
+length_val <- dim(long_df_bar %>% distinct(!! as.name (column_color)))
+length_color <- length_val[1]
+c <- color_palette[1:length_color]
+
+saw_ranking <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  mutate (!!paste0("new_", which_group) := ifelse (Phylum == "p__Bacillota", !! as.name(which_group), "Other_group")) %>%
+  #filter (Phylum == "p__Bacillota") %>%
+  group_by (environment, !!sym(paste0("new_",which_group))) %>% #group_by (environment, !!! rlang::syms(which_group)) %>% !!sym(which_group)
+  summarise (mean_prop_env = mean(prop)) %>%
+  group_by(environment) %>%
+  mutate(env_rank = rank(-mean_prop_env)) %>%
+  arrange(environment, env_rank)
+
+#new_column  <- paste0("new_", which_group)
+long_df_bar <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join (sawshark_meta %>% select(sample_name, environment), by = "sample_name") %>%
+  mutate (!!paste0("new_", which_group) := ifelse (Phylum == "p__Bacillota", !! as.name(which_group), "Other_group")) %>%
+  group_by (sample_name, !!sym(paste0("new_",which_group))) %>%
+  mutate(new_prop = sum(prop)) %>%
+  distinct(sample_name, !! as.name(paste0("new_",which_group)), .keep_all=TRUE) %>%
+  left_join (saw_ranking %>% select(environment, !!sym(paste0("new_",which_group)), env_rank), by = setNames(c(new_column,"environment"), c(new_column, "environment")))%>%
+  mutate (!!paste0(which_group, "_group") := ifelse (env_rank >= 21, "Low_abundant", !!sym(paste0("new_",which_group))))
+
+
+g <- ggplot (long_df_bar, aes (sample_name, new_prop, fill = reorder(!! as.name(paste0(which_group, "_group")), env_rank))) +
+  geom_bar (position="fill", stat = "identity") +
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank())  
+
+################################################################################
+##### Keep only taxa in Bacilliota #######
+################################################################################
+
+
+saw_ranking <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (Phylum == "p__Bacillota") %>%
+  group_by (environment, !!sym(which_group)) %>% #group_by (environment, !!! rlang::syms(which_group)) %>% !!sym(which_group)
+  summarise (mean_prop_env = mean(prop)) %>%
+  group_by(environment) %>%
+  mutate(env_rank = rank(-mean_prop_env)) %>%
+  arrange(environment, env_rank)
+
+#new_column  <- paste0("new_", which_group)
+long_df_bar <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join (sawshark_meta %>% select(sample_name, environment), by = "sample_name") %>%
+  filter (Phylum == "p__Bacillota") %>%
+  group_by (sample_name, !!sym(which_group)) %>%
+  mutate(new_prop = sum(prop)) %>%
+  distinct(sample_name, !! as.name(which_group), .keep_all=TRUE) %>%
+  left_join (saw_ranking %>% select(environment, !!sym(which_group), env_rank), by = setNames(c(which_group,"environment"), c(which_group, "environment")))%>%
+  mutate (!!which_group := ifelse (env_rank >= 21, "Low_abundant", !!sym(which_group)))
+
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+#column_color <- paste0(which_group, "_group")
+#length_val <- dim(long_df_bar %>% distinct(!! as.name (column_color)))
+#length_color <- length_val[1]
+#c <- color_palette[1:length_color]
+
+g <- ggplot (long_df_bar, aes (sample_name, new_prop, fill = reorder(!! as.name(which_group), env_rank))) +
+  geom_bar (position="stack", stat = "identity") +
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = color_palette) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank()) 
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("barchart_Bacillota_", which_group, "_rank20_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("barchart_Bacillota_", which_group, "_rank20_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+g
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+################################################################################
+##### Keep only taxa in Pseudo, Actinomycetota, Plantomycetota, and Bacteroidota #######
+################################################################################
+
+filter_what <- c("p__Pseudomonadota", "p__Actinomycetota", "p__Planctomycetota", "p__Bacteroidota")
+
+saw_ranking <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (Phylum %in% filter_what) %>%
+  group_by (environment, !!sym(which_group)) %>% #group_by (environment, !!! rlang::syms(which_group)) %>% !!sym(which_group)
+  summarise (mean_prop_env = mean(prop)) %>%
+  group_by(environment) %>%
+  mutate(env_rank = rank(-mean_prop_env)) %>%
+  arrange(environment, env_rank)
+
+#new_column  <- paste0("new_", which_group)
+long_df_bar <- sawshark_df %>%
+  pivot_longer (!c(keep), names_to = "sample_name", values_to = "prop") %>% 
+  left_join (sawshark_meta %>% select(sample_name, environment), by = "sample_name") %>%
+  filter (Phylum %in% filter_what) %>%
+  group_by (sample_name, !!sym(which_group)) %>%
+  mutate(new_prop = sum(prop)) %>%
+  distinct(sample_name, !! as.name(which_group), .keep_all=TRUE) %>%
+  left_join (saw_ranking %>% select(environment, !!sym(which_group), env_rank), by = setNames(c(which_group,"environment"), c(which_group, "environment")))%>%
+  mutate (!!(paste0(which_group,"_group")) := ifelse (env_rank >= 21, "Low_abundant", !!sym(which_group))) %>%
+  ungroup ()
+
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+column_color <- paste0(which_group, "_group")
+length_val <- dim(long_df_bar %>% distinct(!! as.name (column_color)))
+length_color <- length_val[1]
+c <- color_palette[1:length_color]
+
+g <- ggplot (long_df_bar, aes (sample_name, new_prop, fill = reorder(!! as.name(paste0(which_group, "_group")), env_rank))) +
+  geom_bar (position="stack", stat = "identity") +
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank()) 
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("barchart_other_phyla_", which_group, "_rank20_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("barchart_other_phyla_", which_group, "_rank20_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+g
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+################################################################################
+##### Make a figure for look at taxa distributed across each environment #######
+################################################################################
+
+long_df_env <- long_df %>%
+  group_by (environment, !!! rlang::syms(which_group)) %>%
+  mutate(environment_mean = mean(group_prop)) %>%
+  distinct(environment, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  arrange(environment, -environment_mean) %>%
+  group_by (environment) %>%
+  mutate(rank_env= rank(-environment_mean)) %>%
+  dplyr::select (-c(sample_name, level_sum, sample_total, group_prop)) %>%
+  mutate (env_taxa = ifelse (rank_env >= 21, "Low_abundant", !!sym(which_group)))
+  #mutate(new_group_prop = sum(group_prop)) 
+
+#a <- "environment"
+#b <- "environment"
+
+long_df_env_bar <- long_df %>%
+  left_join (long_df_env, by = setNames(c(which_group,"environment"),c(which_group, "environment"))) %>%
+  mutate (env_taxa = ifelse (rank_env >= 21, "Low_abundant", !!sym(which_group))) %>%
+  arrange(environment,-environment_mean) %>%
+  group_by (sample_name, env_taxa) %>%
+  mutate(new_group_prop = sum(group_prop)) %>%
+  #filter (env_taxa == "Low_abundant") %>%
+  arrange(environment, -new_group_prop) %>%
+  distinct(sample_name, env_taxa, .keep_all = TRUE)
+
+
+
+g_sawshark <- ggplot (long_df_env_bar %>% filter (environment == "sawshark"), aes (sample_name, new_group_prop, fill = reorder(env_taxa, rank_env))) +
+  #geom_bar (position="fill", stat = "identity") +
+  geom_col (position = "fill") +
+  #facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1))
+
+g_water <- ggplot (long_df_env_bar %>% filter (environment == "water"), aes (sample_name, new_group_prop, fill = reorder(env_taxa, rank_env))) +
+  #geom_bar (position="fill", stat = "identity") +
+  geom_col (position = "fill") +
+  #facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1))
+
+
+plot_grid(
+  g_sawshark, g_water,
+  nrow = 2,
+  labels = "AUTO",
+  label_size = 12,
+  align = "v"
+)
+```
+
+################################################################################
+####### Filter out specific bacterial Class identified as in high abundance above
+################################################################################
+
+```{r}
+sample_df <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  group_by (sample_name) %>%
+  mutate(sample_sum = sum(value), value_prop = value/sample_sum) %>% #### values are based at the sample level
+  ungroup () %>%
+  filter (Class %in% c("c__Bacilli", "c__Gammaproteobacteria", "c__Alphaproteobacteria", "c__Betaproteobacteria")) %>%
+  group_by (sample_name, Order) %>% 
+  mutate (taxa_prop = sum(value_prop)) %>% ### the sum of the Order taxa for each sample
+  distinct(sample_name, Order, .keep_all = TRUE) %>%
+  select (-c(Family, Genus, Species, value, value_prop))
+
+mean_df <- sawshark_data %>% #dataset to be analysed
+  pivot_longer (!c(Kingdom, Phylum, Class, Order, Family, Genus, Species), names_to = 'sample_name', values_to = 'value') %>% #dataframe from wide format to long format
+  left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
+  filter (!(Kingdom %in% c("s__Eukaryota", "s__Viruses"))) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(value)) %>%
+  filter (Class %in% c("c__Bacilli", "c__Gammaproteobacteria", "c__Alphaproteobacteria", "c__Betaproteobacteria")) %>%
+  mutate(value_prop = value/sample_total) %>%
+  ungroup () %>%
+  group_by (sample_name, Order) %>%
+  mutate (taxa_prop = sum(value_prop)) %>% 
+  distinct(sample_name, Order, .keep_all = TRUE) %>%
+  ungroup () %>%
+  group_by (environment, Order) %>%
+  mutate (env_mean = mean(taxa_prop)) %>% ### Mean proportion of Order across each environment
+  distinct(environment, Order, .keep_all=TRUE) %>%
+  ungroup () %>%
+  select(-c(Family, Genus, Species, sample_name, value, sample_total, value_prop)) %>%
+  group_by (environment) %>%
+  mutate (taxa_rank = rank(-env_mean)) %>%
+  mutate (top_taxa = ifelse (taxa_rank >= 21, "Low_abundant", Order)) %>%
+  #mutate (env_taxa = ifelse (rank_env >= 21, "Low_abundant", Class)) %>%
+  group_by (environment, top_taxa) %>%
+  mutate(new_taxa_prop = sum(taxa_prop))
+  
+sample_bar <- sample_df %>%
+  left_join ((mean_df %>% select(-c(Kingdom, Phylum, Class))), by = c("environment"="environment", "Order"="Order"))
+
+
+
+g1_sawshark <- ggplot (sample_bar %>% filter (environment == "sawshark"), aes (sample_name, taxa_prop, fill = reorder(top_taxa, taxa_rank))) +
+  geom_bar (position = "stack", stat = "identity") +
+  #geom_col (position = "fill") +
+  #facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1))
+  
+g1_water <- ggplot (sample_bar %>% filter (environment == "water"), aes (sample_name, taxa_prop, fill = reorder(top_taxa, taxa_rank))) +
+  geom_bar (position = "stack", stat = "identity") +
+  #geom_col (position = "fill") +
+  #facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = c) +
+  guides(fill=guide_legend(title="Taxonomic Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1))  
+
+
+cowplot::plot_grid(
+  g1_sawshark, g1_water,
+  nrow = 2,
+  labels = "AUTO",
+  label_size = 12,
+  align = "v"
+)
+```
+
+################################################################################
+########################### MAGs ###############################################
+################################################################################
+```{r}
+
+vae_cluster <- read.table ("vae_clusters_contigs.tsv", sep = "\t")
+
+mag_counts <- read.table ("sawshark_mag_counts.tsv", sep = "\t", header = T)
+
+bin_taxa <- read.table ("../MAGs/all_sawshark_gtdbtk.bac120.summary.tsv", sep = "\t", header = T)
+bin_quality <- read.table ("../MAGs/all_sawshark_quality_report.tsv", sep = "\t", header = T)
+
+mags <- mag_counts %>%
+  pivot_longer (-V2, names_to = "sample", values_to = "value") %>%
+  left_join (vae_cluster, by = "V2") %>% 
+  rename ("MAG" = V1, "contig" = V2) %>%
+  select(-contig) %>%
+  group_by (sample, MAG) %>%
+  mutate (sample_value = sum(value)) %>%
+  select (-value) %>%
+  distinct () %>%
+  pivot_wider (names_from = sample, values_from = sample_value, values_fill = 0) %>%
+  rename("bin" = MAG)
+
+bins <- bin_quality %>%
+  left_join ((bin_taxa %>% select (bin,taxonomy)), by = "bin") %>%
+  left_join (mags, by = "bin")
+
+write.csv (bins, "../MAGs/sawshark_bins.csv")
+  
+###still need to order the MAGs and filter based on completeness from CheckM
+###add taxonomic data to this file as a column
+
+#Make long format table of mags 2 bins
+
+mags_long <- mags %>%
+  pivot_longer (-bin, names_to = "sample", values_to = "abundance")
+
+mags_long$sample <- gsub('[.Read.Count]', '', mags_long$sample)
+
+#write.table (mags_long, file = "bins2samples.tsv", sep = "\t")
+
+mags_long_no_abundance <- mags_long %>% select (-abundance)
+write.table (mags_long_no_abundance, file = "bins2samples.tsv", sep = "\t")
+
+```
+
+################################################################################
+################## Read functional table into R ################################
+################################################################################
+
+```{r}
+
+functions <- read.csv (paste0(comp.dir, "/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/subsystems/all_norm_ss_use.csv"), header = TRUE)
+
+######## Add an OGU column ######################################################
+######## this creates a unique taxa variable that identifies each unique sequence
+######## the number of OGU's correspond with the number of Species identified ###
+
+functions_data <- functions %>%
+  pivot_longer
+  mutate (ss_id = row_number())
+
+functions_data$ss_id <- paste0("ss_", functions_data$ss_id)
+functions_data <- functions_data %>% relocate (ss_id, .after = Subsystem)
+
+
+
+```
+
+########################################################################################################
+############### Running ACOMBC on taxonomic data comparing sawsharks and water #########################
+########################################################################################################
+https://www.bioconductor.org/packages/release/bioc/vignettes/ANCOMBC/inst/doc/ANCOMBC2.html
+also:
+https://chiliubio.github.io/microeco_tutorial/basic-class.html
+
+```{r}
+
+##### Make a metadata table for Phyloseq Object
+##### Columns as the cateogories that samples are classified into -- Sample names in column 1
+deseq_meta <- sawshark_meta %>%
+  filter(to_keep =="keep") %>%
+  mutate(sample_column = sample_name) %>%
+  #select(sample_name,environment, sample_column) %>%
+  column_to_rownames("sample_column")
+    
+##### Make a taxonomic (functional) table with samples as columns and taxa as rows
+##### Taxa will need to be named as a unique Taxa ID and put as rownames
+st_rows<- functions %>%
+  pivot_longer (!c(Level_1, Level_2, Level_3,Subsystem), names_to = "sample", values_to ="abund") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, func_name, to_keep), by = c("sample" = "func_name")) %>%
+  filter (to_keep == "keep") %>%
+  dplyr::select(-c(sample, to_keep)) %>%
+  group_by (sample_name, Subsystem) %>%
+  mutate (new_abund = sum(abund), new_abund = round(new_abund, 0)) %>%
+  dplyr::select (-abund) %>%
+  distinct(sample_name, Subsystem, .keep_all = TRUE) %>%
+  ungroup () %>%
+  #mutate (otu = paste0("sp",otu)) %>%
+  #dplyr::select (-all_of(which_group)) %>%
+  dplyr::rename (Order = "Level_1", Family = "Level_2", Genus = "Level_3", Species = "Subsystem") %>%
+  pivot_wider (names_from = "sample_name", values_from = "new_abund", values_fill = 0) %>%
+  mutate(ss_id = row_number(), ss_id = paste0("ss_", ss_id)) %>%
+  relocate (ss_id)
+  #tibble::column_to_rownames (var = "taxa_id") %>%
+  #dplyr::select(-c(all_of(which_group)))
+
+##### Make a taxa metadata data frame 
+##### The Taxa ID used in the OTU table above will correspond with the different taxonomic hierarchies
+func_saw <- st_rows %>%
+  dplyr::select(c(ss_id, Order, Family, Genus, Species)) #Level_1, Level_2, Level_3, Subsystem
+func_saw <- as.data.frame(func_saw)
+# Set row names to TaxonID
+rownames(func_saw) <- func_saw$ss_id
+func_saw <- func_saw %>%
+  dplyr::select (-c(ss_id)) # Remove TaxonID column from data frame
+# Create tax_table with column names preserved
+func_table <- as.matrix(func_saw)
+
+##### Finalize the OTU table from above
+st_rows <- st_rows %>%
+  column_to_rownames(var ="ss_id") %>%
+  dplyr::select(-c(Order, Family, Genus, Species))
+
+##### Make each data set into a phyloseq objectc
+p_meta <- phyloseq::sample_data(deseq_meta)
+p_otu <- phyloseq::otu_table(st_rows, taxa_are_rows = TRUE)
+p_func <- phyloseq::tax_table(func_table)
+rownames(p_func) <- rownames(st_rows)
+
+##### Merge phyloseq objects together into a sigle data frame
+po <- phyloseq::phyloseq (p_meta, p_otu, p_func)
+#po <- phyloseq(sample_data(deseq_meta), otu_table(st_rows, taxa_are_rows = TRUE), tax_table(taxa_saw))
+
+##### Convert to this format below -- not entirely sure what this is doing
+tse = mia::makeTreeSummarizedExperimentFromPhyloseq(po)
+
+
+######## Running ANCOMBC ############
+out = ANCOMBC::ancombc(data = tse, assay_name = "counts", 
+              tax_level = "Species", phyloseq = NULL, 
+              formula = "environment", 
+              p_adj_method = "holm", prv_cut = 0.10, lib_cut = 1000, 
+              group = "environment", struc_zero = TRUE, neg_lb = TRUE, tol = 1e-5, 
+              max_iter = 100, conserve = TRUE, alpha = 0.05, global = TRUE,
+              n_cl = 1, verbose = TRUE)
+
+res_out <- out$res
+res_out <- do.call(cbind, res_out)
+res_sig <- res_out %>%
+  rownames_to_column ("subsystems") %>%
+  arrange(-lfc.environmentwater) %>%
+  mutate (sig = ifelse(q_val.environmentwater <= 0.05, "sig","nonsig")) %>%
+  mutate(abs_lfc = abs(lfc.environmentwater)) %>%
+  left_join (func_saw %>% rownames_to_column ("ss_id"), by = c("subsystems"="Species"))
+
+##################################################################################
+##### Find the abundance of groups identified as enriched across all samples #####
+##################################################################################
+
+list_sig_family <- res_sig %>%
+  filter(sig == "sig")
+
+list_sf <- as.character(list_sig_family$subsystem)
+
+overlay_rank <- functions %>%
+  pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment,sample_name,func_name), by = c("sample_name" = "func_name")) %>%
+  dplyr::select(-sample_name) %>%
+  dplyr::rename(sample_name = "sample_name.y") %>%
+  filter(prop > 0) %>%
+  filter (Subsystem %in% list_sf) %>%
+  group_by (environment, Subsystem) %>%
+  mutate (env_mean = mean(prop)) %>%
+  distinct(environment, Subsystem, .keep_all = TRUE) %>%
+  group_by(environment) %>%
+  mutate(env_rank = rank(-env_mean)) %>%
+  ungroup () %>%
+  arrange(environment, env_rank) %>%
+  mutate (env_rank_fil = ifelse (env_rank >= 21, "Low_abundant", Subsystem)) 
+
+overlay_abund <- functions %>%
+  pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment,sample_name,func_name), by = c("sample_name"="func_name")) %>%
+  dplyr::select(-sample_name) %>%
+  dplyr::rename(sample_name = "sample_name.y") %>%
+  filter(prop > 0) %>%
+  filter (Subsystem %in% list_sf) %>%
+  left_join (overlay_rank %>% dplyr::select(Subsystem, environment, env_rank, env_rank_fil), by = c("environment", "Subsystem")) %>%
+  arrange(rev(environment), env_rank)
+
+
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+color_palette64 <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4","dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+
+
+lfc_abund <- ggplot (overlay_abund, aes (sample_name, prop, fill = reorder(env_rank_fil, env_rank))) + #fill = reorder(env_rank_fil, env_rank)
+  geom_bar (position = "stack", stat = "identity") +
+  facet_grid(.~environment, scales = "free", switch = "x", space = "free_x") + 
+  scale_fill_manual (values = color_palette) +
+  guides(fill=guide_legend(title="Functional Groups")) +
+  xlab ("Sample Name") +
+  ylab ("Proportion of total") +
+  theme_mike_doane() + 
+  guides (fill = guide_legend(ncol=1)) +
+  theme(strip.placement = "outside") +
+  theme (axis.text.x = element_text(hjust = 1, vjust = 1),
+         legend.title =element_blank())
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("lfc_abund_", "function", "_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("lfc_abund_", "function", "_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+lfc_abund
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()  
+
+  
+################################################
+######### Plot ANCOMBC enriched microbial groups 
+################################################
+overlay_mean_abund <- functions %>%
+  pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment,sample_name,func_name), by = c("sample_name"="func_name")) %>%
+  dplyr::select(-sample_name) %>%
+  dplyr::rename(sample_name = "sample_name.y") %>%
+  group_by (environment, Subsystem) %>%
+  mutate (env_mean = mean(prop)) %>%
+  group_by(environment) %>%
+  filter (Subsystem %in% list_sf) %>%
+  ungroup () %>%
+  dplyr::select (-c(sample_name, prop)) %>%
+  distinct(environment, Subsystem, .keep_all = TRUE) %>%
+  pivot_wider (names_from = "environment", values_from = env_mean, values_fill = 0)
+
+to_plot_func <- res_sig %>% 
+  dplyr::rename(Subsystem = "subsystems") %>%
+  filter(sig == "sig") %>%
+  #left_join (sawshark_taxa %>% dplyr::select (Family, Class, Phylum), by ="Family") %>%
+  left_join (overlay_mean_abund %>% select(Subsystem, sawshark,water), by = "Subsystem") %>%
+  mutate (Subsystems = factor(Subsystem, levels = Subsystem), Family=factor(Family)) %>% #, Family = factor(Family))
+  distinct(Subsystems, .keep_all = TRUE) %>%
+  arrange(-lfc.environmentwater) %>%
+  top_n(150, wt = sawshark) #217 is all
+
+
+
+lfc_func <- ggplot(to_plot_func , aes(reorder(Subsystems,-lfc.environmentwater), lfc.environmentwater, fill = Family)) +
+  geom_bar (stat = "identity") +
+  scale_fill_manual (values = color_palette64) +
+  theme_mike_doane () +
+  coord_flip () +
+  guides (fill = guide_legend(ncol = 1))
+
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("lfc_func_rank.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("lfc_func_rank.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+lfc_func
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+##################################################################################################
+################################### Single out sawfish and water #################################
+##################################################################################################
+
+to_plot_func_saw <- res_sig %>% 
+  dplyr::rename(Subsystem = "subsystems") %>%
+  filter(sig == "sig") %>%
+  #left_join (sawshark_taxa %>% dplyr::select (Family, Class, Phylum), by ="Family") %>%
+  left_join (overlay_mean_abund %>% select(Subsystem, sawshark,water), by = "Subsystem") %>%
+  mutate (Subsystems = factor(Subsystem, levels = Subsystem), Family=factor(Family)) %>% #, Family = factor(Family))
+  distinct(Subsystems, .keep_all = TRUE) %>%
+  arrange(-lfc.environmentwater) %>%
+  top_n(150, wt = sawshark) %>% #217 is all
+  filter(lfc.environmentwater<0)
+
+
+
+lfc_func_saw <- ggplot(to_plot_func_saw %>% top_n(-50, wt = lfc.environmentwater), aes(reorder(Subsystems,lfc.environmentwater), lfc.environmentwater, fill = Family)) +
+  geom_bar (stat = "identity") +
+  scale_fill_manual (values = color_palette64) +
+  theme_mike_doane () +
+  coord_flip () +
+  guides (fill = guide_legend(ncol = 1))
+
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("lfc_func_rank.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("lfc_func_rank.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+lfc_func_saw
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+##################################################################################################
+
+
+
+temp <- functions %>%
+  pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment,sample_name,func_name), by = c("sample_name" = "func_name")) %>%
+  dplyr::select(-sample_name) %>%
+  dplyr::rename(sample_name = "sample_name.y") %>%
+  filter(prop > 0) %>%
+  mutate (include = ifelse(Subsystem %in% list_sf, "yes", "no")) %>%
+  group_by (sample_name) %>%
+  mutate(sample_total = sum(prop), ss_prop = prop/sample_total)
+
+sig_lfc_func <- ggplot (temp, aes (sample_name, ss_prop, fill = include)) +
+  geom_bar (position = "stack", stat = "identity") +
+  theme_mike_doane()
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("lfc_sig","_filtered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("lfc_sig","_unfiltered.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+sig_lfc_func
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off()
+
+```
+
+########################################################################################################
+DESeq2 analysis to examine over and under represented microbial groups in sawshark and water microbiomes
+######################################### Gene Functions ###############################################
+########################################################################################################
+
+```{r}
+library(DESeq2)
+##### Make a dataframe with taxa as rows and samples are columns
+deseq_meta <- sawshark_meta %>%
+  filter(to_keep =="keep") %>%
+  select(sample_name,environment)
+
+sawshark_taxa_rows <- functions %>%
+  pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to ="func_name", values_to = "prop") %>%
+  left_join((sawshark_meta %>% dplyr::select(func_name,to_keep, sample_name,environment)), by = c("func_name" = "func_name")) %>%
+  filter (to_keep == "keep") %>%
+  #mutate (tran = fourth(prop)) %>%
+  #mutate (tran = prop) %>%
+  group_by(sample_name, Level_3) %>%
+  mutate (level_sum = sum(prop), level_sum = round(level_sum, digits=0)) %>%
+  #mutate(tran_level = fourth(level_sum)) %>%
+  #mutate (tran_level = level_sum) %>%
+  distinct(sample_name, Level_3, .keep_all = TRUE) %>%
+  #rename(tran = 4) %>%
+  dplyr::select (-c(Level_1, Level_2, Subsystem, to_keep, prop, func_name, environment)) %>%
+  arrange(sample_name) %>%
+  pivot_wider (names_from = sample_name, values_from = "level_sum", values_fill = 0) %>%
+  column_to_rownames ("Level_3")
+
+duplicated_rows <- sawshark_df_raw[duplicated(sawshark_df_raw[["Family"]]) | duplicated(sawshark_df_raw[["Family"]], fromLast = TRUE), ]
+duplicated_rows <- duplicated_rows %>% arrange(!! as.name("Family")) 
+################### Make Deseq Object #############################
+
+dds <- DESeqDataSetFromMatrix (countData = sawshark_taxa_rows,
+                               colData = deseq_meta,
+                               design = ~environment)
+
+#################### Run Deseq ##########################
+
+dds.out <- DESeq(dds)
+
+######
+fun_dds <- estimateSizeFactors(dds)
+fun_counts <- as.data.frame(counts(fun_dds,normalized = TRUE))
+######
+### view results
+res.temp <- results(dds.out)
+summary(res.temp) # negative log2Fold are abundant in sawsharks, while positive log2Fold are abundance in water
+res.padj <- res.temp[order(res.temp$padj),]
+res.log2Folf <- res.temp[order(res.temp$log2FoldChange),]
+
+plotCounts(dds, gene = "g__Mesobacillus", intgroup = "environment")
+plotCounts(dds, gene = "g__Bacillus", intgroup = "environment")
+
+lnames <- res.temp@rownames
+lcolnames <- c('baseMean', 'log2FoldChange', 'lfcSE', 'stat', 'pvalue', 'padj')
+l1<- res.temp@listData$baseMean
+l2 <- res.temp@listData$log2FoldChange
+l3 <- res.temp@listData$lfcSE
+l4 <- res.temp@listData$stat
+l5 <- res.temp@listData$pvalue
+l6 <- res.temp@listData$padj
+
+output.df <- cbind (l1, l2, l3, l4, l5, l6)
+rownames(output.df) <- lnames
+colnames(output.df) <- lcolnames
+output.df <- as.data.frame(output.df)
+output.df <- output.df %>%
+  mutate(sig = ifelse (abs(log2FoldChange) > 1 & padj < 0.05, "yes", "no")) %>%
+  mutate(group = ifelse (log2FoldChange > 0, "water", "sawshark"))
+
+ggplot (output.df, aes (log2FoldChange, -log10(pvalue))) +
+  geom_point (aes (color = sig)) +
+  theme_mike_doane()
+
+#### Plot Counts ###
+par (mfrow=c(1,1))
+plotCounts (dseqObjs[[2]], gene = 'g__Mesobacillus', intgroup = 'environment')
+
+##### Volcano Plot ####
+##### values to the left (negative) on x axis are saw sharks and left (positive) are water microbes
+#reset par
+par(mfrow=c(1,1))
+# Make a basic volcano plot
+with(res.temp, plot(log2FoldChange, -log10(pvalue), pch=20, main="Volcano plot", xlim=c(-3,7)))
+
+# Add colored points: blue if padj<0.01, red if log2FC>1 and padj<0.05)
+with(subset(res.temp, padj<0.05 ), points(log2FoldChange, -log10(pvalue), pch=20, col="blue"))
+with(subset(res.temp, padj<0.05 & abs(log2FoldChange)>1), points(log2FoldChange, -log10(pvalue), pch=20, col="red"))
+
+###### PCA on normalized counts ######
+vsdata <- vst(dds.out, blind=FALSE, nsub =200)
+plotPCA(vsdata, intgroup="environment")
+
+```
+
+################################################################################
+######################## Functional Ordination #################################
+################################################################################
+
+```{r}
+#library(analogue)
+fourth <- function(x) {
+  analogue::tran(x, method = "rootroot")
+}
+
+pco_meta <- sawshark_meta %>%
+  filter(to_keep == "keep") %>%
+  dplyr::select (c(func_name, environment, unique, sequence_length, to_keep, sample_name)) %>%
+  mutate (environment = factor(environment))
+
+######## Data frames to pass into PCO and PERMANOVA #################
+ss_pco_long <- functions %>% ###### samples as rows and taxa as columns
+  pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to ="func_name", values_to = "prop") %>%
+  left_join((sawshark_meta %>% dplyr::select(func_name,to_keep, sample_name)), by = c("func_name" = "func_name")) %>%
+  filter (to_keep == "keep") %>%
+  #mutate (tran = fourth(prop)) %>%
+  #mutate (tran = prop) %>%
+  group_by(sample_name, Level_3) %>%
+  mutate (level_sum = sum(prop)) %>%
+  mutate(tran_level = fourth(level_sum)) %>%
+  #mutate_tran_level = level_sum
+  distinct(sample_name, Level_3, .keep_all = TRUE) %>%
+  #rename(tran = 4) %>%
+  dplyr::select (-c(Level_1, Level_2, Subsystem, to_keep, prop, level_sum, func_name)) %>%
+  pivot_wider (names_from = Level_3, values_from = "tran_level", values_fill = 0) %>%
+  column_to_rownames ("sample_name")
+
+tran_ss_pco <- fun_counts %>% ### From DSeq2 output for functions -- chunk above
+  rownames_to_column("func") %>%
+  pivot_longer (!func, names_to = "sample_name", values_to ="values") %>%
+  pivot_wider (names_from = "func", values_from = "values") %>%
+  column_to_rownames("sample_name")
+
+##################################################################
+
+ss_pco_dist <- vegan::vegdist(tran_ss_pco, method="bray") 
+ss_labels <- as.data.frame(attr(ss_pco_dist, "Labels"))
+
+pcoa <- cmdscale(ss_pco_dist, eig = TRUE)
+
+pcoa_df <- as.data.frame(pcoa$points)
+
+pcoa_df <- pcoa_df %>%
+  rownames_to_column ("sample_name") %>%
+  dplyr::rename(PCO1 = 2, PCO2 = 3) %>%
+  left_join (pco_meta, by = "sample_name")
+
+ggplot (pcoa_df, aes (PCO1, PCO2, label = sample_name)) +
+  geom_point (size = 5, aes (color = environment, shape = sequence_length)) +
+  geom_text () +
+  theme_mike_doane()
+
+adonis_out <- vegan::adonis2 (ss_pco_dist ~ environment, data = pco_meta, permutations = 999)
+
+
+```
+
+################################################################################
+############### Functional Heatmap across enivronments #########################
+################################################################################
+
+```{r}
+
+library_to_load <- c(ClassDiscovery, pheatmap, ComplexHeatmap)
+
+library(ClassDiscovery)
+library(pheatmap)
+library(ComplexHeatmap)
+
+list_sig_family <- res_sig %>%
+  filter(sig == "sig")
+
+list_sf <- as.character(list_sig_family$subsystem)
+
+heat_meta <- sawshark_meta %>%
+  filter(to_keep == "keep") %>%
+  column_to_rownames("sample_name")
+
+func_hier <- functions %>%
+  dplyr::select(Level_1, Level_2, Level_3, Subsystem) %>%
+  filter (Subsystem %in% list_sf) %>%
+  column_to_rownames("Subsystem")
+
+heatmap_fun_diff <- functions %>%
+  pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to = "sample_name", values_to = "prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment,sample_name,func_name,to_keep), by = c("sample_name" = "func_name")) %>%
+  dplyr::select(-sample_name) %>%
+  dplyr::rename(sample_name = "sample_name.y") %>%
+  filter (to_keep == "keep") %>%
+  filter(Subsystem %in% list_sf) %>%
+  dplyr::select(-c(Level_1, Level_2, Level_3, to_keep)) %>%
+  arrange(environment) %>%
+  dplyr::select(-environment) %>%
+  pivot_wider (names_from = "sample_name", values_from = "prop") %>%
+  tibble::column_to_rownames(var = "Subsystem")
+
+hc.features <- heatmap_fun_diff %>%
+  distanceMatrix(metric = "pearson") %>%
+  hclust(method="average")
+  
+hc.samples <- heatmap_fun_diff %>%
+  t() %>%
+  distanceMatrix(metric="pearson") %>%
+  hclust (method = "average")
+
+heatmap_mat <- as.matrix(heatmap_fun_diff)
+
+#heatmap(heatmap_mat)
+
+
+color_palette <- list(Level_1 = c("Cell Envelope" = "dodgerblue2", "Cellular Processes"= "#E31A1C", "DNA Processing"="green4", "Energy"="#6A3D9A","Membrane Transport"="#FF7F00","Metabolism"= "black","Miscellaneous" ="gold1", "Protein Processing" ="skyblue2", "RNA Processing" ="#FB9A99","Regulation And Cell Signaling"="palegreen2", "Stress Response, Defense, Virulence" = "#CAB2D6"),
+                      environment = c("sawshark" = "dodgerblue1", water = "#E31A1C"))
+
+
+Level_1_unique <- func_hier %>%
+  rownames_to_column ("ss") %>%
+  distinct(Level_1)
+
+
+
+pheatmap(heatmap_mat, #heatmap_mat or heat_t_map
+         scale = "row",
+         annotation_col = heat_meta %>% dplyr::select(environment), #func_hier %>% dplyr::select(Level_1),
+         annotation_row = func_hier %>% dplyr::select(Level_1), #heat_meta %>% dplyr::select(environment),
+         annotation_colors = color_palette,
+         cluster_cols = hc.features, #hc.features,
+         cluster_rows = hc.samples, #hc.samples, 
+         show_rownames = FALSE,
+         show_colnames = FALSE)
+
+heat_t <- t(heatmap_fun_diff)
+heat_t_mat <- as.matrix(heat_t)
+
+lfc_heatmap <- pheatmap(heat_t_mat, #heatmap_mat or heat_t_map
+         scale = "column",
+         annotation_col = func_hier %>% dplyr::select(Level_1), #func_hier %>% dplyr::select(Level_1),
+         annotation_row = heat_meta %>% dplyr::select(environment), #heat_meta %>% dplyr::select(environment),
+         annotation_colors = color_palette,
+         cluster_cols = hc.samples, #hc.features,
+         cluster_rows = hc.features, #hc.samples, 
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         cutree_cols = 2,
+         cutree_rows = 3)
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("lfc_function_heatmap.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("lfc_functions_heatmap.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+lfc_heatmap
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off() 
+```
+
+#########################################################################################################
+############################## Run correlation of taxa with gene functions ##############################
+#########################################################################################################
+```{r}
+
+list_sig_family <- res_sig %>% ### From ACOMBC analysis above
+  filter(sig == "sig")
+list_sf <- as.character(list_sig_family$Family)
+
+cor_taxa <- sawshark_df %>% 
+  pivot_longer (-c(all_of(keep)), names_to = "sample_name", values_to ="prop") %>%
+  left_join (sawshark_meta %>% dplyr::select (sample_name, environment, to_keep), by = "sample_name") %>%
+  filter (to_keep == "keep") %>%
+  filter (Family %in% list_sf) %>%
+  filter(environment == "sawshark") %>%
+  group_by (sample_name, !!! rlang::syms(which_group) ) %>%
+  mutate (sum = sum(prop)) %>%
+  dplyr::select (-c(all_of(remove), prop, environment, to_keep)) %>%
+  distinct(sample_name, !!! rlang::syms(which_group), .keep_all = TRUE) %>%
+  arrange(sample_name) %>%
+  pivot_wider (names_from = which_group, values_from = sum, values_fill = 0) %>%
+  column_to_rownames ("sample_name")
+df1 <- cor_taxa
+
+
+cor_func <- functions %>%
+  pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to ="func_name", values_to = "prop") %>%
+  left_join((sawshark_meta %>% dplyr::select(func_name,to_keep, sample_name,environment)), by = c("func_name" = "func_name")) %>%
+  filter (to_keep == "keep") %>%
+  filter(environment == "sawshark") %>%
+  #mutate (tran = fourth(prop)) %>%
+  #mutate (tran = prop) %>%
+  group_by(sample_name, Level_3) %>%
+  mutate (level_sum = sum(prop)) %>%
+  mutate(tran_level = fourth(level_sum)) %>%
+  #mutate_tran_level = level_sum
+  distinct(sample_name, Level_3, .keep_all = TRUE) %>%
+  #rename(tran = 4) %>%
+  dplyr::select (-c(Level_1, Level_2, Subsystem, to_keep, prop, level_sum, func_name, environment)) %>%
+  arrange(sample_name) %>%
+  pivot_wider (names_from = Level_3, values_from = "tran_level", values_fill = 0) %>%
+  column_to_rownames ("sample_name")
+df2 <- cor_func
+
+col1 = 1
+col2 = 1
+
+calculate_correlations <- function(df1, df2) {
+  # Initialize a list to store correlations
+  correlations <- list()
+  
+  # Iterate over columns of df1
+  for (col1 in colnames(df1)) {
+    # Initialize a vector to store correlations for this column
+    column_correlations <- numeric()
+    
+    # Iterate over columns of df2
+    for (col2 in colnames(df2)) {
+      # Calculate correlation between columns
+      correlation <- cor(df1[[col1]], df2[[col2]])
+      
+      # Store correlation in the vector
+      column_correlations <- c(column_correlations, correlation)
+    }
+    
+    # Store correlations for this column in the list
+    correlations[[col1]] <- column_correlations
+  }
+  
+  # Convert list to dataframe
+  correlations_df <- as.data.frame(correlations)
+  # Set column names of correlations dataframe
+  colnames(correlations_df) <- colnames(df1)
+  rownames(correlations_df) <- colnames(df2)
+  
+  # Return correlations dataframe
+  return(correlations_df)
+}
+
+correlation_matrix <- calculate_correlations(df1, df2)
+
+##### Making a heatmap based on the correlations above #####
+
+to_plot_heatmap <- res_sig %>% 
+  mutate (taxa = factor(taxa, levels = taxa), Family = factor(Family)) %>% 
+  filter(sig == "sig") %>%
+  left_join (sawshark_taxa %>% dplyr::select (Family, Class, Phylum), by ="Family") %>%
+  left_join (overlay_mean_abund %>% select(Family, sawshark,water), by = "Family") %>%
+  distinct(Family, .keep_all = TRUE) %>%
+  arrange(-sawshark)
+
+taxa_order <- to_plot_heatmap %>%
+  dplyr::select(Family, sawshark, water) %>%
+  mutate (rank = rank(-sawshark))
+
+cor_mat <- correlation_matrix %>%
+  rownames_to_column ("func") %>%
+  pivot_longer (!func, names_to= "taxa", values_to ="cor") %>%
+  left_join (taxa_order, by =c("taxa" ="Family")) %>%
+  arrange(rank) %>%
+  mutate (rank= factor(rank))
+  
+cor_mat_nona <- na.omit(cor_mat)
+
+ggplot (cor_mat_nona, aes (rank, func, fill = cor)) +
+  geom_tile () +
+  theme_mike_doane()
+
+cor_wide <- cor_mat_nona %>%
+  dplyr::select(-c(sawshark, water, rank)) %>%
+  pivot_wider (names_from = "taxa", values_from = "cor") %>%
+  column_to_rownames ("func")
+
+cor_wide_mat <- as.matrix(cor_wide)
+
+heatmap(cor_wide_mat, scale = "none")
+
+```
