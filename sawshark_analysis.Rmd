@@ -1150,6 +1150,7 @@ par(mfrow=c(1, 1))
 
 ########################################################################################################
 ############### Running ACOMBC on taxonomic data comparing sawsharks and water #########################
+################################## Taxonomic Comparison ################################################
 ########################################################################################################
 
 ```{r}
@@ -1184,6 +1185,12 @@ st_rows<- sawshark_df_raw %>%
 
 taxa_saw <- st_rows %>%
   dplyr::select(c(taxa_id, all_of(which_group)))
+
+taxa_all <- sawshark_df_raw %>%
+  pivot_longer (!c(all_of(keep)), names_to = "sample", values_to ="abund") %>%
+  distinct(!! as.name(which_group), .keep_all = TRUE) %>%
+  dplyr::select (c(all_of(keep)))
+
 taxa_saw <- as.data.frame(taxa_saw)
 # Set row names to TaxonID
 rownames(taxa_saw) <- taxa_saw$taxa_id
@@ -1218,18 +1225,19 @@ taxa_out = ANCOMBC::ancombc(data = tse, assay_name = "counts",
 
 res_out <- taxa_out$res
 res_out <- do.call(cbind, res_out)
-res_sig <- res_out %>%
+res_sig_taxa <- res_out %>%
   rownames_to_column ("taxa") %>%
   arrange(-lfc.environmentwater) %>%
   mutate (sig = ifelse(q_val.environmentwater <= 0.05, "sig","nonsig")) %>%
   mutate(abs_lfc = abs(lfc.environmentwater)) %>%
-  left_join (taxa_saw %>% rownames_to_column ("taxa"), by = "taxa")
+  left_join (taxa_saw %>% rownames_to_column ("taxa"), by = "taxa") %>%
+  left_join (sawshark_taxa %>% dplyr::select(all_of(keep)) %>% distinct(!! as.name(which_group),.keep_all = TRUE), by = "Family")
 
 ##################################################################################
 ##### Find the abundance of groups identified as enriched across all samples #####
 ##################################################################################
 
-list_sig_family <- res_sig %>%
+list_sig_family <- res_sig_taxa %>%
   filter(sig == "sig")
 
 list_sf <- as.character(list_sig_family$Family)
@@ -1531,7 +1539,10 @@ plotPCA(vsdata, intgroup="environment")
 
 ```
 
+################################################################################
 Combine sawshark counts, neutral, and logfold data together
+################################################################################
+
 ```{r}
 sawshark_merged <- sawshark_df %>%
   left_join ((sawshark_meta %>% select(sample_name, environment)), by = "sample_name") %>%
@@ -1722,10 +1733,10 @@ g
 dev.off()
 ```
 
-####################################################
-Additive partitioning of variance - Adipart analysis
-Figure 1 ###########################################
-####################################################
+################################################################################
+################# Additive partitioning of variance - Adipart analysis #########
+########################### Figure 1 ###########################################
+################################################################################
 
 ```{r}
 # sawshark_df
@@ -2042,10 +2053,10 @@ cowplot::plot_grid (g1, g2,g3,
            labels = "AUTO")
 ```
 
-####################################################
-Beta-diversity analysis ############################
-Figure 1 ###########################################
-####################################################
+################################################################################
+######################### Beta-diversity analysis ##############################
+########################### Figure 1 ###########################################
+################################################################################
 
 ```{r}
 library(analogue)
@@ -2248,6 +2259,7 @@ dev.off()
 ################################################################################
 ######## Make barcharts to visually show the distribution of taxa ##############
 ################################################################################
+
 ```{r}
 # sawshark_df is the long format dataset
 # sawshark_meta
@@ -2735,7 +2747,29 @@ also:
 https://chiliubio.github.io/microeco_tutorial/basic-class.html
 
 ```{r}
+what_function <- "Species" #or Level_1 = Order, Level_2 = Family, Level_3 = Genus, Subsystem = Species
 
+if (what_function == "Species") {
+  func_level <- "Subsystem"
+  drop <- c()
+  func_keep <- c("Order","Family","Genus","Species")
+  func_drop <- c("Level_1","Level_2", "Level_3")
+} else if (what_function == "Genus") {
+  func_level <- "Leve_3"
+  drop <- c("Species")
+  func_keep <- c("Order","Family","Genus")
+  func_drop (c("Level_1", "Level_2", "Subsystem"))
+} else if (what_function == "Family") {
+  func_level <- "Level_3"
+  drop <- c("Genus", "Species")
+  func_keep <- c("Order","Family")
+  func_drop <- c("Level_1", "Level_3","Subsystem")
+} else if (what_function == "Order") {
+  func_level <- "Level_1"
+  drop <- c("Family", "Genus", "Species")
+  func_keep <- c("Order")
+  func_drop <- c("Level_2", "Level_3", "Subsystem")
+}
 ##### Make a metadata table for Phyloseq Object
 ##### Columns as the cateogories that samples are classified into -- Sample names in column 1
 deseq_meta <- sawshark_meta %>%
@@ -2745,20 +2779,21 @@ deseq_meta <- sawshark_meta %>%
   column_to_rownames("sample_column")
     
 ##### Make a taxonomic (functional) table with samples as columns and taxa as rows
-##### Taxa will need to be named as a unique Taxa ID and put as rownames
+##### functions will need to be named as a unique Function IDs and put as row names
 st_rows<- functions %>%
   pivot_longer (!c(Level_1, Level_2, Level_3,Subsystem), names_to = "sample", values_to ="abund") %>%
   left_join (sawshark_meta %>% dplyr::select (sample_name, func_name, to_keep), by = c("sample" = "func_name")) %>%
   filter (to_keep == "keep") %>%
   dplyr::select(-c(sample, to_keep)) %>%
-  group_by (sample_name, Subsystem) %>%
+  dplyr::rename (Order = "Level_1", Family = "Level_2", Genus = "Level_3", Species = "Subsystem") %>%
+  dplyr::select (-all_of(drop)) %>%
+  group_by (sample_name, !!! rlang::syms(what_function)) %>% # Change the Functional Level here
   mutate (new_abund = sum(abund), new_abund = round(new_abund, 0)) %>%
   dplyr::select (-abund) %>%
-  distinct(sample_name, Subsystem, .keep_all = TRUE) %>%
+  distinct(sample_name, !!! rlang::syms(what_function), .keep_all = TRUE) %>% # Change the Functional Level here
   ungroup () %>%
   #mutate (otu = paste0("sp",otu)) %>%
   #dplyr::select (-all_of(which_group)) %>%
-  dplyr::rename (Order = "Level_1", Family = "Level_2", Genus = "Level_3", Species = "Subsystem") %>%
   pivot_wider (names_from = "sample_name", values_from = "new_abund", values_fill = 0) %>%
   mutate(ss_id = row_number(), ss_id = paste0("ss_", ss_id)) %>%
   relocate (ss_id)
@@ -2768,7 +2803,7 @@ st_rows<- functions %>%
 ##### Make a taxa metadata data frame 
 ##### The Taxa ID used in the OTU table above will correspond with the different taxonomic hierarchies
 func_saw <- st_rows %>%
-  dplyr::select(c(ss_id, Order, Family, Genus, Species)) #Level_1, Level_2, Level_3, Subsystem
+  dplyr::select(c(ss_id, all_of(func_keep))) #Level_1, Level_2, Level_3, Subsystem
 func_saw <- as.data.frame(func_saw)
 # Set row names to TaxonID
 rownames(func_saw) <- func_saw$ss_id
@@ -2780,7 +2815,7 @@ func_table <- as.matrix(func_saw)
 ##### Finalize the OTU table from above
 st_rows <- st_rows %>%
   column_to_rownames(var ="ss_id") %>%
-  dplyr::select(-c(Order, Family, Genus, Species))
+  dplyr::select(-all_of(func_keep))
 
 ##### Make each data set into a phyloseq objectc
 p_meta <- phyloseq::sample_data(deseq_meta)
@@ -2807,18 +2842,18 @@ out = ANCOMBC::ancombc(data = tse, assay_name = "counts",
 
 res_out <- out$res
 res_out <- do.call(cbind, res_out)
-res_sig <- res_out %>%
-  rownames_to_column ("subsystems") %>%
+res_sig_func <- res_out %>%
+  rownames_to_column (var = what_function) %>%
   arrange(-lfc.environmentwater) %>%
   mutate (sig = ifelse(q_val.environmentwater <= 0.05, "sig","nonsig")) %>%
   mutate(abs_lfc = abs(lfc.environmentwater)) %>%
-  left_join (func_saw %>% rownames_to_column ("ss_id"), by = c("subsystems"="Species"))
+  left_join (func_saw %>% rownames_to_column ("ss_id"), by = setNames (what_function, what_function))
 
 ##################################################################################
 ##### Find the abundance of groups identified as enriched across all samples #####
 ##################################################################################
 
-list_sig_family <- res_sig %>%
+list_sig_family <- res_sig_func %>%
   filter(sig == "sig")
 
 list_sf <- as.character(list_sig_family$subsystem)
@@ -3292,16 +3327,22 @@ dev.off()
 #########################################################################################################
 ```{r}
 
-list_sig_family <- res_sig %>% ### From ACOMBC analysis above
-  filter(sig == "sig")
+list_sig_family <- res_sig_taxa %>% ### From ACOMBC taxonomy analysis above
+  mutate (enriched_group = ifelse (lfc.environmentwater < 0, "sawshark", "water")) %>%
+  filter(sig == "sig" & Phylum %in% c("p__Bacillota", "p__Pseudomonadota", "p__Actinomycetota"))
+         
 list_sf <- as.character(list_sig_family$Family)
+
+list_sig_func <- res_sig_func %>%
+  mutate(enriched_group = ifelse (lfc.environmentwater < 0, "sawshark", "water"))
 
 cor_taxa <- sawshark_df %>% 
   pivot_longer (-c(all_of(keep)), names_to = "sample_name", values_to ="prop") %>%
   left_join (sawshark_meta %>% dplyr::select (sample_name, environment, to_keep), by = "sample_name") %>%
   filter (to_keep == "keep") %>%
-  filter (Family %in% list_sf) %>%
-  filter(environment == "sawshark") %>%
+  filter (Family %in% list_sf) %>% #Should differentially abundant taxa be use?
+  #filter (Phylum == "p__Bacillota") %>%
+  #filter(environment == "sawshark") %>%
   group_by (sample_name, !!! rlang::syms(which_group) ) %>%
   mutate (sum = sum(prop)) %>%
   dplyr::select (-c(all_of(remove), prop, environment, to_keep)) %>%
@@ -3316,20 +3357,22 @@ cor_func <- functions %>%
   pivot_longer (!c(Level_1, Level_2, Level_3, Subsystem), names_to ="func_name", values_to = "prop") %>%
   left_join((sawshark_meta %>% dplyr::select(func_name,to_keep, sample_name,environment)), by = c("func_name" = "func_name")) %>%
   filter (to_keep == "keep") %>%
-  filter(environment == "sawshark") %>%
+  #filter(environment == "sawshark") %>%
   #mutate (tran = fourth(prop)) %>%
   #mutate (tran = prop) %>%
-  group_by(sample_name, Level_3) %>%
+  group_by(sample_name, !!! rlang::syms(func_level)) %>%
   mutate (level_sum = sum(prop)) %>%
-  mutate(tran_level = fourth(level_sum)) %>%
+  #mutate(tran_level = fourth(level_sum)) %>%
   #mutate_tran_level = level_sum
-  distinct(sample_name, Level_3, .keep_all = TRUE) %>%
+  distinct(sample_name, !!! rlang::syms(func_level), .keep_all = TRUE) %>%
   #rename(tran = 4) %>%
-  dplyr::select (-c(Level_1, Level_2, Subsystem, to_keep, prop, level_sum, func_name, environment)) %>%
+  dplyr::select (-c(all_of(func_drop), to_keep, prop, func_name, environment)) %>%
   arrange(sample_name) %>%
-  pivot_wider (names_from = Level_3, values_from = "tran_level", values_fill = 0) %>%
+  pivot_wider (names_from = !! as.name(func_level), values_from = "level_sum", values_fill = 0) %>%
   column_to_rownames ("sample_name")
 df2 <- cor_func
+
+
 
 col1 = 1
 col2 = 1
@@ -3402,6 +3445,89 @@ cor_wide <- cor_mat_nona %>%
 
 cor_wide_mat <- as.matrix(cor_wide)
 
-heatmap(cor_wide_mat, scale = "none")
+
+############ Differentially abundant taxa correlation ################
+
+na_df <- correlation_matrix %>%
+  filter_all(any_vars(is.na(.)))
+
+#### Make row clustering data ####
+correlation_matrix_na <- na.omit(correlation_matrix)
+hc.features_dist <- dist(correlation_matrix_na, method = "euclidean")
+hc.features <- hc.features_dist %>%
+  #distanceMatrix(metric = "pearson") %>%
+  hclust(method="average")
+  
+#### Make column clustering data ####
+hc.samples_dist <- dist(t(correlation_matrix_na), method = "euclidean")
+hc.samples <- hc.samples_dist %>%
+  hclust (method = "average")
+
+taxa_hier <- res_sig_taxa %>% ### This is from ANCOMBC based on TAXA
+  filter (sig == "sig" & Phylum %in% c("p__Bacillota", "p__Pseudomonadota", "p__Actinomycetota")) %>%
+  mutate (group = ifelse (lfc.environmentwater > 0, "water","sawshark")) %>%
+  dplyr::select (Family, group, Phylum) %>%
+  dplyr::rename(Env = "group") %>%
+  column_to_rownames("Family")
+
+func_hier <- res_sig_func %>%
+  mutate (group = ifelse (lfc.environmentwater > 0, "water", "sawshark")) %>%
+  dplyr::select (c(!! as.name(what_function),group, Order,sig)) %>%
+  dplyr::rename (Env = "group", Level_1 = "Order") %>%
+  column_to_rownames(var = what_function)
+
+temp_cor <- as.data.frame(correlation_matrix) %>%
+  rownames_to_column ("Level_3") %>%
+  arrange(Level_3)
+
+color_palette <- c(
+  "dodgerblue2", "#E31A1C", "green4", "#6A3D9A","#FF7F00","black", "gold1", "skyblue2", "#FB9A99","palegreen2","#CAB2D6","#FDBF6F","gray70", "khaki2","maroon", "orchid1", "deeppink1", "blue1", "steelblue4","darkturquoise", "green1", "yellow4", "yellow3","darkorange4", "brown", "deepskyblue3", "gold3", "chartreuse3", "darkorange3", "darkblue", "tomato2", "darkolivegreen3", "lightseagreen", "slategray4"
+)
+heat_palette <- list (
+  Phylum = c(p__Actinomycetota = "orchid1", p__Bacillota = "lightseagreen", p__Pseudomonadota = "palegreen2"),
+  sig = c(nonsig = "dodgerblue2", sig = "#E31A1C"),
+  Env = c(sawshark = "#FF7F00", water = "deepskyblue3")
+)
+
+#Order = c(`Cell Envelope' = "", `Cellular Processes` = " ", `DNA Processing` = "", Energy = "", ),
+lfc_heatmap <- pheatmap::pheatmap(correlation_matrix_na, #heatmap_mat or heat_t_map
+         scale = "none",
+         annotation_col = taxa_hier , #func_hier %>% dplyr::select(Level_1),
+         annotation_row = func_hier,
+         annotation_colors = heat_palette,
+         cluster_cols = hc.samples, #hc.features,
+         cluster_rows = hc.features, #hc.samples, 
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         cutree_cols = 2,
+         cutree_rows = 3)
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+png(file=paste0("lfc_taxa_function_", func_level,"_heatmap.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+} else if (filter == "No") { 
+png(file=paste0("lfc_taxa_function_", func_level,"_heatmap.png"), res=600, width=12000, height=6000, pointsize=10,
+		type="windows", antialias="cleartype")
+  }
+
+lfc_heatmap
+#cowplot::plot_grid (g,
+           #labels = "AUTO", align = "v", ncol =1)
+dev.off() 
+
+
+if (getwd() != "C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures") { 
+setwd("C:/Users/doan0033/Dropbox/Flinders/research/Projects/Saw_sharks_Darwin/Figures")
+}
+
+if (filter == "Yes") { 
+write.csv (res_sig_func, file=paste0("lfc_taxa_function_", func_level,".csv"), row.names = FALSE)
+} else if (filter == "No") { 
+write.csv (res_sig_func, file=paste0("lfc_taxa_function_", func_level,".csv"), row.names = FALSE)
+  }
 
 ```
